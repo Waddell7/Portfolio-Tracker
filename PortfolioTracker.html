@@ -1,0 +1,2194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto',sans-serif;background:#020817;}
+        .chart-wrapper{position:relative;user-select:none;cursor:crosshair;}
+        .crosshair-line{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.18);pointer-events:none;transform:translateX(-50%);}
+        .compare-band{position:absolute;top:0;bottom:0;background:rgba(236,72,153,0.07);border-left:1px dashed rgba(236,72,153,0.3);border-right:1px dashed rgba(236,72,153,0.3);pointer-events:none;}
+        .hover-dot{position:absolute;width:10px;height:10px;border-radius:50%;background:#10b981;border:2px solid #fff;pointer-events:none;transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(16,185,129,0.5);}
+        .lot-row{background:rgba(15,23,42,0.5);}
+        .chevron{transition:transform 0.15s;display:inline-block;font-size:9px;cursor:pointer;}
+        .chevron.open{transform:rotate(90deg);}
+        .ss-bar{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid rgba(51,65,85,0.5);border-radius:12px;overflow:hidden;margin-bottom:2rem;}
+        .ss-cell{padding:16px 20px;border-right:1px solid rgba(51,65,85,0.4);}
+        .ss-cell:last-child{border-right:none;}
+        .ss-label{font-size:11px;color:#64748b;margin-bottom:6px;}
+        .ss-pct{font-size:20px;font-weight:700;color:#f1f5f9;line-height:1.2;}
+        .ss-amt{font-size:12px;color:#94a3b8;margin-top:3px;}
+        .ss-red{color:#f87171!important;}
+        .ss-green{color:#34d399!important;}
+        .sub-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:2rem;}
+        .sub-card{background:rgba(15,23,42,0.6);border:1px solid rgba(51,65,85,0.3);border-radius:8px;padding:10px 14px;}
+        .sub-label{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;}
+        .sub-val{font-size:14px;font-weight:600;color:#f1f5f9;}
+        .sub-pnl{font-size:11px;margin-top:2px;}
+    </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useMemo,useRef}=React;
+const Chart=window.Chart;
+
+const STORAGE_KEY='portfolio_v4';
+const CACHE_KEY='api_cache_v14';
+const CACHE_TTL=5*60*1000;
+const CURRENCIES=['AUD','USD','EUR','GBP','JPY','CAD','CHF','CNY','INR','SGD'];
+// Stored as AUD per 1 foreign unit
+const MOCK_RATES={AUD:1,USD:1.54,EUR:1.68,GBP:1.95,JPY:0.0105,CAD:1.14,CHF:1.73,CNY:0.213,INR:0.0185,SGD:1.14};
+
+// ---- Formatters ----
+const fmtA=(v,d=2)=>'$'+Math.abs(v||0).toLocaleString('en-AU',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtQ=(qty,type)=>{
+    if(!qty) return '0';
+    const t=(type||'').toUpperCase();
+    if(t==='CRYPTOCURRENCY') return parseFloat(qty.toFixed(8)).toLocaleString('en-AU',{maximumFractionDigits:8});
+    if(Number.isInteger(qty)||qty===Math.round(qty)) return Math.round(qty).toLocaleString('en-AU');
+    return parseFloat(qty.toFixed(4)).toLocaleString('en-AU',{maximumFractionDigits:4});
+};
+const symOf=(c)=>({AUD:'AU$',USD:'US$',GBP:'£',EUR:'€',JPY:'¥',CAD:'CA$',CHF:'CHF ',SGD:'S$'}[c]||(c+' '));
+const today=()=>new Date().toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
+
+// ---- Geo defaults ----
+const defGeo=(type,exchange)=>{
+    const t=(type||'').toUpperCase();
+    if(t==='CRYPTOCURRENCY') return {us:0,aus:0,eu:0,asia:0,other:100};
+    if(t==='ETF') return {us:0,aus:0,eu:0,asia:0,other:0}; // ETF always manual — no auto-fill
+    if(exchange){
+        if(exchange==='Australian'||exchange==='ASX'||exchange.includes('ASX')) return {us:0,aus:100,eu:0,asia:0,other:0};
+        if(['NASDAQ','NYSE','NYSEArca'].includes(exchange)) return {us:100,aus:0,eu:0,asia:0,other:0};
+        if(exchange==='London'||exchange==='LSE') return {us:0,aus:0,eu:100,asia:0,other:0};
+        if(exchange==='Tokyo'||exchange==='Hong Kong') return {us:0,aus:0,eu:0,asia:100,other:0};
+    }
+    return {us:0,aus:0,eu:0,asia:0,other:0};
+};
+
+const blank=()=>({
+    id:Date.now().toString(),ticker:'',tickerDisplay:'',assetType:'STOCK',positionType:'long',
+    purchaseDate:new Date().toISOString().split('T')[0],quantity:0,purchasePrice:0,
+    purchaseCurrency:'AUD',exchange:'',purchaseExchangeRate:null,
+    onMargin:false,marginPct:0,
+    geographicExposure:{us:0,aus:0,eu:0,asia:0,other:0},sales:[]
+});
+
+// ---- Cache ----
+const gc=(k)=>{try{const c=localStorage.getItem(CACHE_KEY+'_'+k);if(!c)return null;const{d,t}=JSON.parse(c);return Date.now()-t>CACHE_TTL?null:d;}catch(e){return null;}};
+const sc=(k,d)=>{try{localStorage.setItem(CACHE_KEY+'_'+k,JSON.stringify({d,t:Date.now()}));}catch(e){}};
+
+// ---- API ----
+const CMAP={BTC:'bitcoin',ETH:'ethereum',SOL:'solana',XRP:'ripple',BNB:'binancecoin',ADA:'cardano',DOGE:'dogecoin',LTC:'litecoin',DOT:'polkadot',MATIC:'polygon'};
+
+const fetchCrypto=async(holdings)=>{
+    const ch=holdings.filter(h=>{const t=(h.assetType||'').toUpperCase();return t==='CRYPTOCURRENCY'||t==='CRYPTO';}).filter(h=>h.ticker);
+    if(!ch.length) return {};
+    const prices={};
+    const ids=[...new Set(ch.map(h=>{const b=h.ticker.replace(/-AUD|-USD/g,'');return CMAP[b]||b.toLowerCase()}))].join(',');
+    try{
+        const r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+ids+'&vs_currencies=aud,usd');
+        const d=await r.json();
+        ch.forEach(h=>{const b=h.ticker.replace(/-AUD|-USD/g,'');const id=CMAP[b]||b.toLowerCase();if(d[id]?.aud>0)prices[h.id]=d[id].aud;});
+    }catch(e){console.error('Crypto:',e);}
+    return prices;
+};
+
+const yTicker=(ticker,exchange)=>{
+    if(ticker.includes('.')) return ticker;
+    const m={Australian:'.AX',ASX:'.AX',London:'.L',LSE:'.L',Toronto:'.TO',TSX:'.TO',Frankfurt:'.DE',Paris:'.PA',Amsterdam:'.AS',Tokyo:'.T','Hong Kong':'.HK',Singapore:'.SI',NASDAQ:'',NYSE:'',NYSEArca:''};
+    return ticker+(m[exchange]||'');
+};
+
+const fetchStocks=async(holdings)=>{
+    const prices={};
+    const stocks=holdings.filter(h=>{const t=(h.assetType||'').toUpperCase();return t!=='CRYPTOCURRENCY'&&t!=='CRYPTO';});
+    for(const h of stocks){
+        try{
+            const yt=yTicker(h.ticker,h.exchange);
+            const url='https://corsproxy.io/?'+encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+yt);
+            const r=await fetch(url);const d=await r.json();
+            const p=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+            if(p&&p>0)prices[h.id]=p;
+        }catch(e){console.error('Stock:',h.ticker,e);}
+    }
+    return prices;
+};
+
+const fetchRates=async()=>{
+    const c=gc('rates');if(c) return c;
+    try{
+        const r=await fetch('https://api.exchangerate-api.com/v4/latest/AUD');
+        const d=await r.json();if(!d.rates) throw new Error();
+        const rates={AUD:1};
+        CURRENCIES.forEach(c=>{if(c!=='AUD')rates[c]=1/(d.rates[c]||1);});
+        const result={rates,isMock:false};sc('rates',result);return result;
+    }catch(e){return{rates:MOCK_RATES,isMock:true};}
+};
+
+const searchT=async(q)=>{
+    if(q.length<1) return [];
+    try{
+        const url='https://corsproxy.io/?'+encodeURIComponent('https://query2.finance.yahoo.com/v1/finance/search?q='+q+'&quotesCount=8&newsCount=0');
+        const r=await fetch(url);const d=await r.json();
+        return(d.quotes||[]).map(q=>({ticker:q.symbol,name:q.longname||q.shortname||q.symbol,exchange:q.exchDisp||'Unknown',type:q.quoteType||'EQUITY'}));
+    }catch(e){return[];}
+};
+
+// ---- Calculations ----
+// purchaseExchangeRate stored as "AUD per 1 foreign" e.g. 1.55 means 1 USD = 1.55 AUD
+// User inputs in AUD/USD format e.g. 0.645, which we convert: store = 1/0.645 = 1.55
+
+const calcFxPct=(h,rates)=>{
+    if(h.purchaseCurrency==='AUD') return 0;
+    if(!h.purchaseExchangeRate) return null;
+    // currentRate = AUD per 1 foreign (e.g. 1.38 now vs 1.55 at purchase)
+    return((rates[h.purchaseCurrency]||1)/h.purchaseExchangeRate-1)*100;
+};
+
+// ---- Sales helpers ----
+// Sold quantity across all sales for this holding
+const soldQty=(h)=>(h.sales||[]).reduce((s,x)=>s+(x.quantity||0),0);
+// Remaining (effective) quantity = original purchase minus sold
+const effQty=(h)=>Math.max(0,(h.quantity||0)-soldQty(h));
+// Realized P&L components from sales — locked at sale time using sale exchange rate
+const realizedComponents=(h,rates)=>{
+    if(!h.sales||!h.sales.length) return {capital:0,fx:0,total:0,proceeds:0,cost:0};
+    const isShort=h.positionType==='short';
+    const per=h.purchaseExchangeRate||1;
+    let capital=0,fx=0,proceeds=0,cost=0;
+    h.sales.forEach(s=>{
+        const sRate=s.saleExchangeRate||rates[h.purchaseCurrency]||1;
+        const cap=isShort
+            ?s.quantity*(h.purchasePrice-s.salePrice)*sRate
+            :s.quantity*(s.salePrice-h.purchasePrice)*sRate;
+        const fxg=s.quantity*h.purchasePrice*(sRate-per);
+        capital+=cap;
+        fx+=fxg;
+        proceeds+=s.quantity*s.salePrice*sRate; // AUD value at sale time (locked)
+        cost+=s.quantity*h.purchasePrice*per;   // original AUD cost of sold units
+    });
+    return {capital,fx,total:capital+fx,proceeds,cost};
+};
+
+// ---- Dividend helpers ----
+// Total dividend income in AUD for a holding
+const dividendIncome=(h,rates)=>{
+    if(!h.dividends||!h.dividends.length) return 0;
+    return h.dividends.reduce((sum,d)=>{
+        const er=d.exchangeRate>0?(1/d.exchangeRate):(rates[d.currency||h.purchaseCurrency]||1);
+        const netAmt=d.quantity*d.amountPerUnit*er;
+        const divisor=1-(d.frankedPct||0)/100*0.30;
+        const gross=divisor>0?netAmt/divisor:netAmt;
+        return sum+gross; // use gross (includes franking credits = pre-paid tax)
+    },0);
+};
+const frankingCredits=(h,rates)=>{
+    if(!h.dividends||!h.dividends.length) return 0;
+    return h.dividends.reduce((sum,d)=>{
+        const er=d.exchangeRate>0?(1/d.exchangeRate):(rates[d.currency||h.purchaseCurrency]||1);
+        const netAmt=d.quantity*d.amountPerUnit*er;
+        const divisor=1-(d.frankedPct||0)/100*0.30;
+        const gross=divisor>0?netAmt/divisor:netAmt;
+        return sum+gross*(d.frankedPct||0)/100*0.30;
+    },0);
+};
+const groupD=(holdings,rates)=>{
+    const g={};
+    holdings.forEach(h=>{
+        if(!h.dividends||!h.dividends.length) return;
+        const exD=normEx(h.exchange,h.assetType);
+        if(!g[h.ticker]) g[h.ticker]={
+            ticker:h.ticker,tickerDisplay:h.tickerDisplay,exchange:h.exchange,exD,
+            purchaseCurrency:h.purchaseCurrency,payments:[]
+        };
+        h.dividends.forEach((d,di)=>{
+            const er=d.exchangeRate>0?(1/d.exchangeRate):(rates[d.currency||h.purchaseCurrency]||1);
+            const netAmt=d.quantity*d.amountPerUnit*er;
+            const divisor=1-(d.frankedPct||0)/100*0.30;
+            const gross=divisor>0?netAmt/divisor:netAmt;
+            const fc=gross*(d.frankedPct||0)/100*0.30;
+            const net=netAmt;
+            g[h.ticker].payments.push({
+                holdingId:h.id,divIndex:di,
+                date:d.date,amountPerUnit:d.amountPerUnit,quantity:d.quantity,
+                currency:d.currency||h.purchaseCurrency,exchangeRate:d.exchangeRate,
+                gross,fc,net,frankedPct:d.frankedPct||0
+            });
+        });
+    });
+    return Object.values(g).map(grp=>{
+        const payments=grp.payments.sort((a,b)=>b.date.localeCompare(a.date));
+        const totalGross=payments.reduce((s,p)=>s+p.gross,0);
+        const totalFc=payments.reduce((s,p)=>s+p.fc,0);
+        const totalNet=payments.reduce((s,p)=>s+p.net,0);
+        const lastDate=payments[0]?.date||'';
+        const paymentCount=payments.length;
+        return{...grp,payments,totalGross,totalFc,totalNet,lastDate,paymentCount};
+    });
+};
+
+const calcM=(h,price,rates)=>{
+    const isShort = h.positionType === 'short';
+    const er=rates[h.purchaseCurrency]||1;
+    const per=h.purchaseExchangeRate||er;
+    const qty=effQty(h); // remaining units only — sold units no longer move with price
+    const pp=h.purchasePrice;
+
+    const pvAUD=qty*pp*per; // cost basis in AUD at purchase rate
+    const cvAUD=qty*price*er; // current value in AUD at current rate
+
+    // Capital gain: for long = price went up = profit. For short = price went down = profit.
+    const rawCapital = isShort ? qty*(pp-price)*er : qty*(price-pp)*er;
+    const capitalAUD = rawCapital;
+    const capitalPct = pp>0 ? (isShort ? ((pp-price)/pp)*100 : ((price-pp)/pp)*100) : 0;
+
+    // FX gain: impact of exchange rate change on original cost
+    const fxAUD=qty*pp*(er-per);
+
+    // Total P&L
+    const pnlAUD = capitalAUD + fxAUD;
+
+    const returnPct=pvAUD>0?(pnlAUD/pvAUD)*100:0;
+    const fxPct=calcFxPct(h,rates);
+
+    return{pvAUD,cvAUD,capitalAUD,capitalPct,fxAUD,pnlAUD,returnPct,fxPct};
+};
+
+// Helper: get the capital actually deployed (margin deposit if on margin, else full cost)
+const getDeployed=(h,m)=>{
+    if(h.onMargin&&h.marginPct>0){
+        // Capital deployed = margin deposit = full position value * margin%
+        const deposit=m.pvAUD*(h.marginPct/100);
+        return{deployed:deposit,gain:m.pnlAUD};
+    }
+    return{deployed:m.pvAUD,gain:m.pnlAUD};
+};
+
+const calcStats=(holdings,prices,rates)=>{
+    let total=0,basis=0,capTotal=0,fxTotal=0,pnlTotal=0,incomeTotal=0;
+    let S={v:0,p:0},E={v:0,p:0},C={v:0,p:0};
+    holdings.forEach(h=>{
+        const m=calcM(h,prices[h.id]||h.purchasePrice,rates);
+        const {deployed,gain}=getDeployed(h,m);
+        const r=realizedComponents(h,rates);
+        const soldDeposit=(h.onMargin&&h.marginPct>0)?r.cost*(h.marginPct/100):r.cost;
+        const divInc=dividendIncome(h,rates);
+        total+=deployed+gain+divInc; // live value + dividend cash received
+        basis+=deployed+soldDeposit;
+        pnlTotal+=gain+r.total+divInc;
+        capTotal+=m.capitalAUD+r.capital;
+        fxTotal+=m.fxAUD+r.fx;
+        incomeTotal+=divInc;
+        const t=(h.assetType||'').toUpperCase();
+        const subV=deployed+gain;
+        const subP=gain+r.total+divInc;
+        if(t==='STOCK'){S.v+=subV;S.p+=subP;}
+        else if(t==='ETF'){E.v+=subV;E.p+=subP;}
+        else{C.v+=subV;C.p+=subP;}
+    });
+    return{
+        total,basis,pnl:pnlTotal,returnPct:basis>0?(pnlTotal/basis)*100:0,
+        capTotal,capPct:basis>0?(capTotal/basis)*100:0,
+        fxTotal,fxPct:basis>0?(fxTotal/basis)*100:0,
+        incomeTotal,incomePct:basis>0?(incomeTotal/basis)*100:0,
+        S,E,C
+    };
+};
+
+const calcAB=(holdings,p,r)=>{
+    const b={Stocks:0,ETFs:0,Crypto:0};
+    holdings.forEach(x=>{
+        const m=calcM(x,p[x.id]||x.purchasePrice,r);
+        const {deployed,gain}=getDeployed(x,m);
+        const rc=realizedComponents(x,r);
+        const v=deployed+gain+rc.proceeds;
+        const t=(x.assetType||'').toUpperCase();
+        if(t==='STOCK')b.Stocks+=v;else if(t==='ETF')b.ETFs+=v;else b.Crypto+=v;
+    });
+    return Object.entries(b).filter(([_,v])=>v>0).map(([name,value])=>({name,value}));
+};
+
+const calcGB=(holdings,p,r)=>{
+    const b={US:0,AUS:0,EU:0,ASIA:0,Other:0};
+    holdings.forEach(x=>{
+        const t=(x.assetType||'').toUpperCase();
+        if(t==='CRYPTOCURRENCY'||t==='CRYPTO') return; // crypto has no geographic exposure
+        const m=calcM(x,p[x.id]||x.purchasePrice,r);
+        const {deployed,gain}=getDeployed(x,m);
+        const rc=realizedComponents(x,r);
+        const v=deployed+gain+rc.proceeds;
+        const g=x.geographicExposure||defGeo(x.assetType,x.exchange);
+        b.US+=v*(g.us||0)/100;b.AUS+=v*(g.aus||0)/100;
+        b.EU+=v*(g.eu||0)/100;b.ASIA+=v*(g.asia||0)/100;b.Other+=v*(g.other||0)/100;
+    });
+    return Object.entries(b).filter(([_,v])=>v>0.01).map(([name,value])=>({name,value}));
+};
+
+// Fetch real historical prices for a single ticker from Yahoo Finance via corsproxy
+const fetchHistoricalPrices = async (ticker, exchange, fromDateStr) => {
+    const cacheKey = 'hist_' + ticker + '_' + fromDateStr;
+    const cached = gc(cacheKey);
+    if (cached) return cached;
+    try {
+        const yt = yTicker(ticker, exchange);
+        const from = Math.floor(new Date(fromDateStr).getTime() / 1000);
+        const to = Math.floor(Date.now() / 1000);
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yt}?period1=${from}&period2=${to}&interval=1d`;
+        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+        const r = await fetch(proxyUrl);
+        const d = await r.json();
+        const result = d?.chart?.result?.[0];
+        if (!result) return null;
+        const timestamps = result.timestamp || [];
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        // Yahoo timestamps are midnight local exchange time.
+        // For UTC+ exchanges, midnight local = previous UTC day → toISOString() gives wrong date.
+        // Add 1 day (86400s) for all UTC+ exchanges to get the correct trading date.
+        // UTC0 (LSE) and UTC- (NYSE, TSX, B3 etc.) are already correct with toISOString().
+        const UTC_PLUS_SUFFIXES = [
+            '.AX','.NZ',                          // Oceania
+            '.T','.KS','.KQ',                     // Japan, Korea
+            '.HK','.SI','.SS','.SZ',              // China, HK, Singapore
+            '.BO','.NS',                           // India
+            '.DE','.PA','.AS','.MI','.MC',        // Europe (Central)
+            '.BR','.LS','.SW','.ST','.CO','.HE','.OL', // Europe (others)
+            '.IS','.TA','.JO'                     // Turkey, Israel, South Africa
+        ];
+        const needsOffset = UTC_PLUS_SUFFIXES.some(s => yt.endsWith(s));
+        const priceMap = {};
+        timestamps.forEach((ts, i) => {
+            if (closes[i] != null) {
+                const offset = needsOffset ? 86400 : 0;
+                const date = new Date((ts + offset) * 1000).toISOString().split('T')[0];
+                priceMap[date] = closes[i];
+            }
+        });
+        sc(cacheKey, priceMap);
+        return priceMap;
+    } catch (e) {
+        console.error('Historical fetch failed for', ticker, e);
+        return null;
+    }
+};
+
+// Fetch historical FX rates for a currency pair via Yahoo Finance.
+// Returns a map of { 'YYYY-MM-DD': rate } where rate = AUD per 1 foreign unit.
+// e.g. for USD: fetches AUDUSD=X (USD per 1 AUD), inverts to get AUD per 1 USD.
+const fetchHistoricalFX = async (currency, fromDateStr) => {
+    if (currency === 'AUD') return null;
+    const cacheKey = 'fx2_' + currency + '_' + fromDateStr;
+    const cached = gc(cacheKey);
+    if (cached && Object.keys(cached).length > 0) return cached;
+    try {
+        const pair = 'AUD' + currency + '=X';
+        const from = Math.floor(new Date(fromDateStr + 'T00:00:00').getTime() / 1000);
+        const to = Math.floor(Date.now() / 1000);
+        const url = `https://query2.finance.yahoo.com/v8/finance/chart/${pair}?period1=${from}&period2=${to}&interval=1d`;
+        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+        const r = await fetch(proxyUrl);
+        const d = await r.json();
+        const result = d?.chart?.result?.[0];
+        if (!result) return null;
+        const timestamps = result.timestamp || [];
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        const fxMap = {};
+        timestamps.forEach((ts, i) => {
+            if (closes[i] != null && closes[i] > 0) {
+                // Yahoo FX timestamps are at 23:00 UTC (forex close at 5pm EST/EDT).
+                // Adding 3600s (1 hour) pushes past UTC midnight so toISOString gives the correct date.
+                const date = new Date((ts + 3600) * 1000).toISOString().split('T')[0];
+                fxMap[date] = 1 / closes[i];
+            }
+        });
+        console.log(`FX sample:`, Object.entries(fxMap).slice(0, 3));
+        if (Object.keys(fxMap).length > 0) sc(cacheKey, fxMap);
+        return Object.keys(fxMap).length > 0 ? fxMap : null;
+    } catch (e) {
+        console.error('FX fetch error:', e.message);
+        return null;
+    }
+};
+const fetchCryptoHistorical = async (coinId, fromDateStr) => {
+    const cacheKey = 'cghist_' + coinId + '_' + fromDateStr;
+    const cached = gc(cacheKey);
+    if (cached) return cached;
+    try {
+        const from = Math.floor(new Date(fromDateStr).getTime() / 1000);
+        const to = Math.floor(Date.now() / 1000);
+        const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=aud&from=${from}&to=${to}`;
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!d.prices?.length) return null;
+        const priceMap = {};
+        d.prices.forEach(([ts, price]) => {
+            const dt = new Date(ts);
+            const pad = n => String(n).padStart(2, '0');
+            const date = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+            priceMap[date] = price;
+        });
+        sc(cacheKey, priceMap);
+        return priceMap;
+    } catch (e) {
+        console.error('CoinGecko historical failed for', coinId, e);
+        return null;
+    }
+};
+
+
+const genHist = async (holdings, prices, rates) => {
+    if (!holdings.length) return [];
+    const today = new Date(); today.setHours(0,0,0,0);
+    // Always format dates as local YYYY-MM-DD — never toISOString() which gives UTC dates
+    const localStr = (d) => { const pad=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+    const todayStr = localStr(today);
+    const earliest = holdings.reduce((e,h) => { const d = new Date(h.purchaseDate+'T12:00:00'); return (!isNaN(d.getTime()) && d < e) ? d : e; }, today);
+    const totalDaysRaw = Math.ceil((today - earliest) / 86400000); const totalDays = (isNaN(totalDaysRaw) || totalDaysRaw < 1) ? 1 : totalDaysRaw;
+
+    // Fetch real historical price maps for each unique ticker
+    const tickerMaps = {};
+    const uniqueTickers = [...new Set(holdings.map(h => h.ticker + '|' + h.exchange + '|' + (h.assetType||'')))];
+    await Promise.all(uniqueTickers.map(async (key) => {
+        const [ticker, exchange, assetType] = key.split('|');
+        const isCrypto = (assetType||'').toUpperCase()==='CRYPTOCURRENCY'||(assetType||'').toUpperCase()==='CRYPTO';
+        const fromDate = holdings.filter(h => h.ticker === ticker)[0]?.purchaseDate || todayStr;
+        if (isCrypto) {
+            const tickerBase = ticker.replace(/-AUD|-USD|-EUR|-GBP/gi, '');
+            const coinId = CMAP[tickerBase] || tickerBase.toLowerCase();
+            const map = await fetchCryptoHistorical(coinId, fromDate);
+            if (map) tickerMaps[ticker] = map;
+        } else {
+            const map = await fetchHistoricalPrices(ticker, exchange, fromDate);
+            if (map) tickerMaps[ticker] = map;
+        }
+    }));
+
+    // Fetch historical FX rates for all non-AUD currencies used in holdings
+    const fxMaps = {};
+    const currencies = [...new Set(holdings.map(h => h.purchaseCurrency).filter(c => c && c !== 'AUD'))];
+    const earliestDate = holdings.reduce((e,h) => h.purchaseDate < e ? h.purchaseDate : e, todayStr);
+    await Promise.all(currencies.map(async currency => {
+        const map = await fetchHistoricalFX(currency, earliestDate);
+        if (map) fxMaps[currency] = map;
+    }));
+
+    // Look up historical FX rate for a currency on a given date (fall back up to 5 days)
+    // FX maps are keyed by UTC date (as Yahoo presents them), so look up by UTC.
+    const getHistFX = (currency, ds, fallbackRate) => {
+        if (currency === 'AUD') return 1;
+        const map = fxMaps[currency];
+        if (!map) return fallbackRate;
+        let checkDate = new Date(ds + 'T12:00:00Z');
+        if (isNaN(checkDate.getTime())) return fallbackRate;
+        for (let back = 0; back <= 5; back++) {
+            const checkStr = checkDate.toISOString().split('T')[0];
+            if (map[checkStr] != null) return map[checkStr];
+            checkDate.setDate(checkDate.getDate() - 1);
+        }
+        return fallbackRate;
+    };
+    const dateArr = Array.from({ length: totalDays + 1 }, (_, i) => {
+        const d = new Date(today); d.setDate(d.getDate() - (totalDays - i));
+        return localStr(d);
+    });
+
+    // Helper: get historical price for a ticker on a given date (look back up to 5 days for weekends/holidays)
+    const getHistPrice = (ticker, ds) => {
+        const histMap = tickerMaps[ticker];
+        if (!histMap) return null;
+        // priceMap is keyed by UTC date (toISOString). ds is a local date string.
+        // For US stocks these match. For ASX stocks, ds="2025-11-19" but map has "2025-11-18"
+        // (since ASX midnight local = 13:00 UTC same day → toISOString gives prev day).
+        // The 5-day lookback handles both cases.
+        let checkDate = new Date(ds + 'T12:00:00Z'); // noon UTC
+        if (isNaN(checkDate.getTime())) return null;
+        for (let back = 0; back <= 5; back++) {
+            const checkStr = checkDate.toISOString().split('T')[0];
+            if (histMap[checkStr] != null) return histMap[checkStr];
+            checkDate.setDate(checkDate.getDate() - 1);
+        }
+        return null;
+    };
+
+    // Build date array covering the full period from earliest holding purchase to today
+    // value = total P&L gain of all ACTIVE holdings (no capital injection surge)
+    // basis = total cost basis of active holdings (used for ptValue = basis + gain = portfolio value)
+    return dateArr.map(ds => {
+        const dayOfWeek = new Date(ds + 'T00:00:00').getDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) return null;
+        let portfolioValue = 0, basis = 0, gain = 0;
+        holdings.forEach(h => {
+            const holdStart = new Date(h.purchaseDate + 'T00:00:00');
+            holdStart.setHours(0,0,0,0);
+            if (new Date(ds + 'T00:00:00') < holdStart) return;
+
+            // Use historical FX rate on this date (not today's rate) so chart values
+            // correctly reflect what the portfolio was actually worth in AUD on that day.
+            const er = (ds === todayStr)
+                ? (rates[h.purchaseCurrency] || 1)
+                : getHistFX(h.purchaseCurrency, ds, rates[h.purchaseCurrency] || 1);
+            const per = h.purchaseExchangeRate || er;
+            const isShort = h.positionType === 'short';
+
+            // Sales completed BY this date — those units have left the position.
+            let soldByDate = 0, realizedGainByDate = 0;
+            (h.sales||[]).forEach(s => {
+                if (s.saleDate <= ds) {
+                    const sRate = s.saleExchangeRate || rates[h.purchaseCurrency] || 1;
+                    soldByDate += s.quantity;
+                    const cap = isShort
+                        ? s.quantity * (h.purchasePrice - s.salePrice) * sRate
+                        : s.quantity * (s.salePrice - h.purchasePrice) * sRate;
+                    const fxg = s.quantity * h.purchasePrice * (sRate - per);
+                    realizedGainByDate += cap + fxg;
+                }
+            });
+
+            const remainingQty = Math.max(0, h.quantity - soldByDate);
+
+            // Historical/live price for remaining units.
+            // On the exact sale date of a unit, use the sale price for that unit's
+            // final contribution so the gain transition is perfectly smooth (no cliff).
+            const hp = (ds === h.purchaseDate)
+                ? h.purchasePrice
+                : (ds === todayStr && prices[h.id])
+                    ? prices[h.id]
+                    : (getHistPrice(h.ticker, ds) ?? h.purchasePrice);
+
+            const remCost = remainingQty * h.purchasePrice * per;
+            const remCostAdj = (h.onMargin && h.marginPct > 0) ? remCost * (h.marginPct/100) : remCost;
+            const remCapGain = isShort
+                ? remainingQty * (h.purchasePrice - hp) * er
+                : remainingQty * (hp - h.purchasePrice) * er;
+            const remFxGain = remainingQty * h.purchasePrice * (er - per);
+            const remGain = remCapGain + remFxGain;
+
+            const soldCost = soldByDate * h.purchasePrice * per;
+            const soldCostAdj = (h.onMargin && h.marginPct > 0) ? soldCost * (h.marginPct/100) : soldCost;
+
+            portfolioValue += remCostAdj + remGain;
+            basis += remCostAdj + soldCostAdj;
+            gain += remGain + realizedGainByDate;
+
+            // Gross dividend income paid on or before this date
+            // Adds to both gain (P&L line) and portfolioValue (hover headline)
+            (h.dividends||[]).forEach(d=>{
+                if(d.date<=ds){
+                    const der=d.exchangeRate>0?(1/d.exchangeRate):(rates[d.currency||h.purchaseCurrency]||1);
+                    const divNet=d.quantity*d.amountPerUnit*der;
+                    const divDivisor=1-(d.frankedPct||0)/100*0.30;
+                    const divGross=divDivisor>0?divNet/divDivisor:divNet;
+                    gain+=divGross;
+                    portfolioValue+=divGross;
+                }
+            });
+        });
+        return { date: ds, value: portfolioValue, basis, gain, returnPct: basis > 0 ? (gain / basis) * 100 : 0 };
+    }).filter(Boolean);
+};
+
+const groupH=(holdings,prices,rates)=>{
+    // Only show holdings with units still remaining. Fully-sold holdings appear in the Sales section.
+    const active=holdings.filter(h=>effQty(h)>0);
+    const g={};
+    active.forEach(h=>{if(!g[h.ticker])g[h.ticker]={ticker:h.ticker,tickerDisplay:h.tickerDisplay,exchange:h.exchange,assetType:h.assetType,purchaseCurrency:h.purchaseCurrency,lots:[]};g[h.ticker].lots.push(h);});
+    return Object.values(g).map(grp=>{
+        const tQty=grp.lots.reduce((s,h)=>s+effQty(h),0);
+        const tCost=grp.lots.reduce((s,h)=>s+effQty(h)*h.purchasePrice,0);
+        const avgEntry=tQty>0?tCost/tQty:0;
+        let tCurAUD=0,tBasisAUD=0,tCapAUD=0,tFxAUD=0,tPnlAUD=0,tDeployed=0;
+        let tBasisAtCurrentRate=0;
+        grp.lots.forEach(h=>{
+            const m=calcM(h,prices[h.id]||h.purchasePrice,rates);
+            tCurAUD+=m.cvAUD;tBasisAUD+=m.pvAUD;
+            tCapAUD+=m.capitalAUD;tFxAUD+=m.fxAUD;
+            tPnlAUD+=m.pnlAUD;
+            const dep=(h.onMargin&&h.marginPct>0)?m.pvAUD*(h.marginPct/100):m.pvAUD;
+            tDeployed+=dep;
+            const er=rates[h.purchaseCurrency]||1;
+            tBasisAtCurrentRate+=effQty(h)*h.purchasePrice*er;
+        });
+        const tReturnPct=tDeployed>0?(tPnlAUD/tDeployed)*100:0;
+        const tCapPct=tBasisAtCurrentRate>0?(tCapAUD/tBasisAtCurrentRate)*100:0;
+        let wFx=0,hasFx=false;
+        grp.lots.forEach(h=>{
+            const m=calcM(h,prices[h.id]||h.purchasePrice,rates);
+            if(m.fxPct!==null&&h.purchaseExchangeRate){hasFx=true;wFx+=m.fxPct*(m.pvAUD/(tBasisAUD||1));}
+        });
+        return{...grp,tQty,avgEntry,curPrice:prices[grp.lots[0].id]||grp.lots[0].purchasePrice,
+            tCurAUD,tBasisAUD,tCapAUD,tCapPct,tFxAUD,tPnlAUD,tReturnPct,wFx:hasFx?wFx:null,isStale:!prices[grp.lots[0].id]};
+    });
+};
+
+// Group sales by ticker. Each row shows total sold qty, avg sale price, and locked returns.
+// Expand chevron to see individual sale transactions.
+const groupS=(holdings,rates)=>{
+    const g={};
+    holdings.forEach(h=>{
+        if(!h.sales||!h.sales.length) return;
+        const isShort=h.positionType==='short';
+        const per=h.purchaseExchangeRate||1;
+        h.sales.forEach((s,si)=>{
+            if(!g[h.ticker])g[h.ticker]={ticker:h.ticker,tickerDisplay:h.tickerDisplay,exchange:h.exchange,assetType:h.assetType,purchaseCurrency:h.purchaseCurrency,sales:[]};
+            const sRate=s.saleExchangeRate||rates[h.purchaseCurrency]||1;
+            const proceedsAUD=s.quantity*s.salePrice*sRate;
+            const costAUD=s.quantity*h.purchasePrice*per;
+            const capitalAUD=isShort
+                ?s.quantity*(h.purchasePrice-s.salePrice)*sRate
+                :s.quantity*(s.salePrice-h.purchasePrice)*sRate;
+            const fxAUD=s.quantity*h.purchasePrice*(sRate-per);
+            const returnAUD=capitalAUD+fxAUD;
+            const capitalPct=h.purchasePrice>0
+                ?(isShort?((h.purchasePrice-s.salePrice)/h.purchasePrice*100):((s.salePrice-h.purchasePrice)/h.purchasePrice*100))
+                :0;
+            const fxPct=h.purchaseCurrency==='AUD'?null:((sRate/per-1)*100);
+            const returnPct=costAUD>0?(returnAUD/costAUD)*100:0;
+            g[h.ticker].sales.push({
+                holdingId:h.id,saleIndex:si,
+                quantity:s.quantity,salePrice:s.salePrice,saleDate:s.saleDate,
+                purchasePrice:h.purchasePrice,purchaseCurrency:h.purchaseCurrency,
+                proceedsAUD,costAUD,capitalAUD,capitalPct,fxAUD,fxPct,returnAUD,returnPct
+            });
+        });
+    });
+    return Object.values(g).map(grp=>{
+        const totalSoldQty=grp.sales.reduce((s,x)=>s+x.quantity,0);
+        const totalProceedsAUD=grp.sales.reduce((s,x)=>s+x.proceedsAUD,0);
+        const totalCostAUD=grp.sales.reduce((s,x)=>s+x.costAUD,0);
+        const totalCapitalAUD=grp.sales.reduce((s,x)=>s+x.capitalAUD,0);
+        const totalFxAUD=grp.sales.reduce((s,x)=>s+x.fxAUD,0);
+        const totalReturnAUD=grp.sales.reduce((s,x)=>s+x.returnAUD,0);
+        const avgSalePrice=totalSoldQty>0
+            ?grp.sales.reduce((s,x)=>s+x.salePrice*x.quantity,0)/totalSoldQty
+            :0;
+        const totalCapitalPct=totalCostAUD>0?(totalCapitalAUD/totalCostAUD)*100:0;
+        const totalReturnPct=totalCostAUD>0?(totalReturnAUD/totalCostAUD)*100:0;
+        let wFx=0,hasFx=false;
+        grp.sales.forEach(x=>{
+            if(x.fxPct!==null){hasFx=true;wFx+=x.fxPct*(x.costAUD/(totalCostAUD||1));}
+        });
+        const avgBuyPrice=totalSoldQty>0
+            ?grp.sales.reduce((s,x)=>s+x.purchasePrice*x.quantity,0)/totalSoldQty
+            :0;
+        return{...grp,totalSoldQty,avgSalePrice,avgBuyPrice,totalProceedsAUD,totalCostAUD,
+            totalCapitalAUD,totalCapitalPct,totalFxAUD,wFx:hasFx?wFx:null,
+            totalReturnAUD,totalReturnPct};
+    });
+};
+
+// Exchange name normalizer
+const normEx=(ex,assetType)=>{
+    if(!ex||(assetType||'').toUpperCase()==='CRYPTOCURRENCY') return 'Crypto';
+    if(ex.includes('Australian')||ex==='ASX') return 'ASX';
+    if(ex==='NASDAQ'||ex.toLowerCase().includes('nasdaq')) return 'NASDAQ';
+    if(ex==='NYSEArca'||ex.toLowerCase().includes('arca')) return 'NYSE Arca';
+    if(ex==='NYSE'||ex.toLowerCase().includes('new york')) return 'NYSE';
+    if(ex==='LSE'||ex.toLowerCase().includes('london')) return 'LSE';
+    if(ex==='TSX'||ex.toLowerCase().includes('toronto')) return 'TSX';
+    if(ex==='ASX'||ex.toLowerCase().includes('asx')) return 'ASX';
+    return ex;
+};
+
+// ---- Pie ----
+const Pie=({data,colors,title})=>{
+    const ref=useRef(null),cRef=useRef(null);
+    const total=data?.reduce((s,d)=>s+d.value,0)||0;
+    useEffect(()=>{
+        if(!ref.current||!data?.length) return;
+        if(cRef.current)cRef.current.destroy();
+        const ctx=ref.current.getContext('2d');
+        const piePlugin={
+            id:'pct',
+            afterDatasetsDraw:(chart)=>{
+                const cd=chart.data,cc=chart.ctx;
+                chart.getDatasetMeta(0).data.forEach((dp,i)=>{
+                    const pos=dp.tooltipPosition();
+                    const v=cd.datasets[0].data[i];
+                    const t=cd.datasets[0].data.reduce((a,b)=>a+b,0);
+                    const p=((v/t)*100).toFixed(0);
+                    if(parseFloat(p)<8) return;
+                    cc.fillStyle='rgba(255,255,255,0.9)';
+                    cc.font='bold 12px sans-serif';
+                    cc.textAlign='center';
+                    cc.textBaseline='middle';
+                    cc.fillText(p+'%',pos.x,pos.y);
+                });
+            }
+        };
+        cRef.current=new Chart(ctx,{
+            type:'doughnut',
+            data:{labels:data.map(d=>d.name),datasets:[{data:data.map(d=>d.value),backgroundColor:colors,borderColor:'#020817',borderWidth:4,hoverBorderColor:'#020817',hoverBorderWidth:4,hoverOffset:6}]},
+            options:{
+                responsive:true,maintainAspectRatio:true,cutout:'68%',
+                plugins:{
+                    legend:{display:false},
+                    tooltip:{backgroundColor:'rgba(2,8,23,0.95)',titleColor:'#f1f5f9',bodyColor:'#94a3b8',padding:12,cornerRadius:8,
+                        callbacks:{label:(c)=>{const t=c.dataset.data.reduce((a,b)=>a+b,0);return ' '+c.label+':  $'+c.parsed.toLocaleString('en-AU',{maximumFractionDigits:0})+' ('+(c.parsed/t*100).toFixed(1)+'%)';}}
+                    }
+                }
+            },
+            plugins:[piePlugin]
+        });
+        return()=>{if(cRef.current)cRef.current.destroy();};
+    },[data]);
+
+    return(
+        <div>
+            <div style={{position:'relative',width:'200px',height:'200px',margin:'0 auto'}}>
+                <canvas ref={ref}></canvas>
+            </div>
+            {/* Custom legend */}
+            <div style={{display:'flex',flexWrap:'wrap',justifyContent:'center',gap:'8px 16px',marginTop:'16px'}}>
+                {data.map((d,i)=>(
+                    <div key={d.name} style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px'}}>
+                        <div style={{width:'10px',height:'10px',borderRadius:'50%',background:colors[i],flexShrink:0}}></div>
+                        <span style={{color:'#94a3b8'}}>{d.name}</span>
+                        <span style={{color:'#64748b',fontSize:'11px'}}>({(d.value/total*100).toFixed(1)}%)</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// Date formatters
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtAxis=(ds)=>{ if(!ds) return ''; const d=new Date(ds+'T00:00:00'); return MONTHS[d.getMonth()]+" '"+String(d.getFullYear()).slice(2); };
+const fmtFull=(ds)=>{ if(!ds) return ''; const d=new Date(ds+'T00:00:00'); return d.getDate()+' '+MONTHS[d.getMonth()]+" '"+String(d.getFullYear()).slice(2); };
+
+// ---- Stake Chart ----
+const StakeChart=({data, totalValue, totalPnl, totalReturnPct, earliestPurchaseDate, benchmark, setBenchmark, benchmarkData})=>{
+    const canvasRef=useRef(null),chartRef=useRef(null),wrapRef=useRef(null);
+    const [tf,setTf]=useState('Y');
+    const [hIdx,setHIdx]=useState(null);
+    const [drag,setDrag]=useState({start:null,end:null,active:false});
+    const [pts,setPts]=useState([]);
+
+    const fd=useMemo(()=>{
+        if(!data?.length) return [];
+        const now=new Date();
+        if(tf==='5D') return data.slice(-5);
+        if(tf==='All'){
+            if(!data.length) return data;
+            const refDate = earliestPurchaseDate || data[0].date;
+            const firstDate = new Date(refDate+'T12:00:00');
+            firstDate.setDate(firstDate.getDate()-1);
+            while(firstDate.getDay()===0||firstDate.getDay()===6) firstDate.setDate(firstDate.getDate()-1);
+            const pad=n=>String(n).padStart(2,'0');
+            const anchorDate=`${firstDate.getFullYear()}-${pad(firstDate.getMonth()+1)}-${pad(firstDate.getDate())}`;
+            // Only prepend if the anchor date doesn't already exist in the data
+            if(data.some(d=>d.date===anchorDate)) return data;
+            return [{date:anchorDate, value:0, basis:1, gain:0, returnPct:0}, ...data];
+        }
+        const subMonths=(n)=>{const d=new Date(now);d.setMonth(d.getMonth()-n);d.setHours(0,0,0,0);return d;};
+        const toLocalDateStr=(d)=>{const pad=n=>String(n).padStart(2,'0');return`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;};
+        const cutoffMap={
+            '1M':subMonths(1),'3M':subMonths(3),'6M':subMonths(6),
+            YTD:new Date(now.getFullYear(),0,1,0,0,0,0),
+            Y:subMonths(12)
+        };
+        const cutoff = cutoffMap[tf];
+        if(!cutoff) return data;
+        const cutoffStr = toLocalDateStr(cutoff);
+        const filtered = data.filter(d => d.date >= cutoffStr);
+        // Prepend flat $0 trading-day points for any gap between the timeframe cutoff and
+        // the first real data point (e.g. 1Y selected but only held for 1 month).
+        const flatPoints = [];
+        if(filtered.length > 0) {
+            const firstRealStr = filtered[0].date;
+            let d = new Date(cutoff);
+            while(toLocalDateStr(d) < firstRealStr) {
+                const dow = d.getDay();
+                if(dow !== 0 && dow !== 6) {
+                    flatPoints.push({ date: toLocalDateStr(d), value: 0, basis: 1, returnAmt: 0, returnPct: 0 });
+                }
+                d.setDate(d.getDate()+1);
+            }
+        }
+        return [...flatPoints, ...filtered];
+    },[data,tf]);
+
+    const dispIdx=hIdx!==null?hIdx:fd.length-1;
+    const dispPt=fd[dispIdx];
+    const cmpActive=drag.start!==null&&drag.end!==null&&drag.start!==drag.end;
+    const cS=cmpActive?Math.min(drag.start,drag.end):0;
+    const cE=cmpActive?Math.max(drag.start,drag.end):fd.length-1;
+    const pStart=fd[cS]||fd[0];
+    const pEnd=fd[cE]||fd[fd.length-1];
+
+    // Data model: d.value = portfolio value, d.gain = absolute P&L, d.basis = cost basis on that date
+    const fdFirstReal = fd.find(d=>d.basis>1) || fd[0];
+    const fdLast = fd[fd.length-1];
+
+    // P&L at first/last real points in the visible window
+    const fdFirstGain = fdFirstReal?.basis>1 ? (fdFirstReal.gain||0) : 0;
+    const fdLastGain  = fdLast?.basis>1      ? (fdLast.gain||0)      : (totalPnl||0);
+
+    // Portfolio value at the start of the visible period (for flat-point fallback and %)
+    const periodStartPortVal = fdFirstReal?.basis>1
+        ? fdFirstReal.value
+        : Math.max(1, (totalValue||0) - (totalPnl||0));
+    const ptValue=(pt)=>pt&&pt.basis>1?pt.value:0; // pre-purchase flat = 0
+
+    // CHART LINE = normalized P&L (current_PnL minus PnL at period start).
+    // This makes the chart start at 0 for the selected timeframe. For MAX where the
+    // first real point has gain=0 (purchase-date pinned), this equals absolute P&L.
+    // Pre-purchase flat points stay at 0 (no profit/loss yet).
+    const plotValuesNorm = useMemo(()=>
+        fd.map(d => d.basis>1 ? ((d.gain||0) - fdFirstGain) : 0)
+    ,[fd, fdFirstGain]);
+
+    // Y-axis range based on normalized P&L (includes the $0 baseline)
+    // Benchmark normalised to same $0 baseline as portfolio line
+    const benchmarkNorm=useMemo(()=>{
+        if(!benchmark||!benchmarkData?.length) return [];
+        const bMap={};
+        benchmarkData.forEach(d=>{bMap[d.date]=d.priceAUD;});
+        const getBP=(ds)=>{
+            let cd=new Date(ds+'T12:00:00Z');
+            if(isNaN(cd.getTime())) return null;
+            for(let b=0;b<=5;b++){const s=cd.toISOString().split('T')[0];if(bMap[s]!=null)return bMap[s];cd.setDate(cd.getDate()-1);}
+            return null;
+        };
+        const startPt=fd.find(d=>d.basis>1);
+        if(!startPt) return [];
+        const startPrice=getBP(startPt.date);
+        if(!startPrice) return [];
+        // Use current total cost basis as scale so benchmark is comparable to full portfolio
+        const scalePt=[...fd].reverse().find(d=>d.basis>1);
+        const startVal=scalePt?.basis||startPt.value;
+        return fd.map(d=>{
+            if(d.basis<=1) return 0;
+            const p=getBP(d.date);
+            return p!=null?startVal*(p/startPrice-1):null;
+        });
+    },[fd,benchmark,benchmarkData]);
+
+    // Benchmark % return over the current window
+    const benchmarkPct=useMemo(()=>{
+        if(!benchmarkNorm.length) return null;
+        const lastVal=[...benchmarkNorm].reverse().find(v=>v!=null);
+        const scalePt=[...fd].reverse().find(d=>d.basis>1);
+        if(lastVal==null||!scalePt?.basis) return null;
+        return(lastVal/scalePt.basis)*100;
+    },[benchmarkNorm,fd]);
+
+    const realNorm = fd.filter(d=>d.basis>1).map(d => (d.gain||0) - fdFirstGain);
+    const bmNormReal = benchmarkNorm.filter(v=>v!=null);
+    const allNorm = [...realNorm, ...bmNormReal];
+    const realMin = allNorm.length ? Math.min(0, ...allNorm) : 0;
+    const realMax = allNorm.length ? Math.max(0, ...allNorm) : 1;
+    const realRange = Math.max(1, realMax-realMin);
+    const yMin = realMin - realRange*0.20;
+    const yMax = realMax + realRange*0.20;
+    const yAxisOffset = 0;
+
+    // Period boundaries — used for the proper return % formula:
+    //   If timeframe starts BEFORE holdings (beginning value = 0):
+    //     % = (ending_value - net_contributions) / net_contributions
+    //   If timeframe starts WITH holdings (beginning value > 0):
+    //     % = (ending_value - beginning_value - net_contributions) / beginning_value
+    // The numerator equals fdLastGain - fdFirstGain in either case (pure period return).
+    // MAX (tf==='All') keeps its existing formula (totalReturnPct = gain / total basis).
+    const fdFirst = fd[0];
+    const startsFlat = fdFirst && fdFirst.basis <= 1;
+    const periodBeginningValue = startsFlat ? 0 : (fdFirst?.value || 0);
+    const periodBeginningBasis = startsFlat ? 0 : (fdFirst?.basis || 0);
+    const periodNetContributions = (fdLast?.basis || 0) - periodBeginningBasis;
+
+    // When the period starts flat, ALL holdings fall within the window so period return = total return.
+    // Use totalPnl/totalReturnPct from props (same source as the summary bar) so they always match.
+    // When the period starts with real holdings (held longer than the window), compute from genHist data.
+    const defaultPeriodRet = startsFlat
+        ? (totalPnl||0)
+        : (fdLastGain - fdFirstGain);
+    const defaultPeriodPct = startsFlat
+        ? (totalReturnPct||0)
+        : (periodBeginningValue > 0 ? (defaultPeriodRet / periodBeginningValue) * 100 : 0);
+
+    // HOVER HEADLINE:
+    //   - Real point: show actual portfolio value on that date
+    //   - Flat point (pre-purchase): show $0 (no holdings yet)
+    //   - No hover: show current total
+    const hoverActive = hIdx!==null && !cmpActive && dispPt;
+    const hoverIsReal = hoverActive && dispPt.basis>1;
+    const headlineValue = hoverIsReal ? dispPt.value : hoverActive ? 0 : (totalValue||0);
+
+    const periodIsLoss = defaultPeriodRet < 0;
+    const lineColor = periodIsLoss ? '#f87171' : '#10b981';
+
+    let subtitleRet, subtitlePct, subtitleLabel;
+    if(cmpActive){
+        subtitleRet=defaultPeriodRet; subtitlePct=defaultPeriodPct; subtitleLabel=tf==='All'?'All time':tf;
+    } else if(hoverIsReal){
+        // Real hover: absolute P&L and % at that date
+        subtitleRet = dispPt.gain||0;
+        subtitlePct = dispPt.basis>0 ? (subtitleRet/dispPt.basis)*100 : 0;
+        subtitleLabel = fmtFull(dispPt.date);
+    } else if(hoverActive){
+        // Flat point hover: $0, no holdings yet
+        subtitleRet = 0; subtitlePct = 0; subtitleLabel = fmtFull(dispPt.date);
+    } else {
+        subtitleRet=defaultPeriodRet; subtitlePct=defaultPeriodPct; subtitleLabel=tf==='All'?'All time':tf;
+    }
+    const subtitleIsUp = subtitleRet >= 0;
+
+    // Scrub comparison: change in P&L between the two endpoints
+    const scrubIsFullPeriod = pStart&&pEnd&&pStart.basis<=1&&pEnd===fdLast;
+    const cmpRet = scrubIsFullPeriod
+        ? (totalPnl||0)
+        : (pEnd&&pStart
+            ? ((pEnd.basis>1 ? (pEnd.gain||0) : 0) - (pStart.basis>1 ? (pStart.gain||0) : 0))
+            : 0);
+    const cmpIsLoss = cmpRet < 0;
+    const cmpStartPortVal = pStart?.basis>1 ? pStart.value : (pEnd?.basis || 0);
+    const cmpRetPct = scrubIsFullPeriod
+        ? (totalReturnPct||0)
+        : (cmpStartPortVal>0 ? (cmpRet/cmpStartPortVal)*100 : 0);
+
+    // Ref so the scrub plugin can read live comparison state without recreating chart
+    const cmpStateRef = useRef({active:false,s:0,e:0,isLoss:false});
+    cmpStateRef.current = {active:cmpActive, s:cS, e:cE, isLoss:cmpIsLoss};
+
+    // Trigger chart redraw when comparison state changes (for scrub line coloring)
+    // Guard with try-catch in case chart was destroyed between effects
+    useEffect(()=>{
+        try { if(chartRef.current) chartRef.current.update('none'); } catch(e){}
+    },[cmpActive, cS, cE, cmpIsLoss]);
+
+    useEffect(()=>{
+        if(!canvasRef.current||!fd.length) return;
+        if(chartRef.current)chartRef.current.destroy();
+        const ctx=canvasRef.current.getContext('2d');
+        const chartH = canvasRef.current.offsetHeight || 280;
+
+        // Build two datasets: line (no fill) + fill area
+        // GAIN: fill between baseline (y=0) and the line — only where line is ABOVE baseline
+        // Single dataset with Chart.js 4.x fill:{target:'origin',above,below}
+        // Clips gradient precisely between line and baseline — never bleeds outside the line.
+        const gainGrad = ctx.createLinearGradient(0, 0, 0, chartH);
+        gainGrad.addColorStop(0,   'rgba(16,185,129,0.22)');
+        gainGrad.addColorStop(0.7, 'rgba(16,185,129,0.05)');
+        gainGrad.addColorStop(1,   'rgba(16,185,129,0.0)');
+
+        const lossGrad = ctx.createLinearGradient(0, 0, 0, chartH);
+        lossGrad.addColorStop(0,   'rgba(248,113,113,0.0)');
+        lossGrad.addColorStop(0.3, 'rgba(248,113,113,0.05)');
+        lossGrad.addColorStop(1,   'rgba(248,113,113,0.22)');
+
+        const fillCfg = periodIsLoss
+            ? { target: 'origin', above: 'transparent', below: lossGrad }
+            : { target: 'origin', above: gainGrad,      below: 'transparent' };
+
+        const linePlugin={id:'p',afterRender:(chart)=>{const m=chart.getDatasetMeta(0);if(m&&m.data&&m.data.length)setPts(m.data.map(pt=>({x:pt.x,y:pt.y})));} };
+        const baselinePlugin={id:'baseline',afterDraw:(chart)=>{
+            const {ctx:c,chartArea,scales:{y}}=chart;
+            const baseY=y.getPixelForValue(0);
+            if(baseY<chartArea.top||baseY>chartArea.bottom) return;
+            c.save();c.setLineDash([5,5]);c.strokeStyle='rgba(148,163,184,0.3)';c.lineWidth=1;
+            c.beginPath();c.moveTo(chartArea.left,baseY);c.lineTo(chartArea.right,baseY);c.stroke();c.restore();
+        }};
+        const scrubPlugin={id:'scrub',afterDatasetsDraw:(chart)=>{
+            const {active,s,e,isLoss}=cmpStateRef.current;
+            if(!active||s===e) return;
+            const meta=chart.getDatasetMeta(0);
+            if(!meta.data.length) return;
+            const {ctx:c,chartArea}=chart;
+            const mpts=meta.data;
+            const s2=Math.min(s,e),e2=Math.min(Math.max(s,e),mpts.length-1);
+            if(s2>=mpts.length) return;
+            c.save();
+            c.beginPath();c.rect(mpts[s2].x,chartArea.top,mpts[e2].x-mpts[s2].x,chartArea.bottom-chartArea.top);c.clip();
+            c.beginPath();c.strokeStyle=isLoss?'#f87171':'#10b981';c.lineWidth=2;
+            let mv=false;
+            for(let i=s2;i<=e2;i++){const pt=mpts[i];if(!mv){c.moveTo(pt.x,pt.y);mv=true;}else c.lineTo(pt.x,pt.y);}
+            c.stroke();c.restore();
+        }};
+
+        chartRef.current=new Chart(ctx,{
+            type:'line',
+            data:{labels:fd.map(d=>d.date),datasets:[
+                {data:plotValuesNorm, borderColor:lineColor, borderWidth:1.5, fill:fillCfg, tension:0, pointRadius:0, pointHoverRadius:0, spanGaps:true},
+                ...(benchmarkNorm.length?[{data:benchmarkNorm, borderColor:'#3b82f6', borderWidth:1.5, fill:false, tension:0, pointRadius:0, pointHoverRadius:0, spanGaps:true}]:[])
+            ]},
+            options:{
+                responsive:true,maintainAspectRatio:false,animation:{duration:100},
+                interaction:{mode:'index',intersect:false},
+                plugins:{legend:{display:false},tooltip:{enabled:false}},
+                scales:{
+                    x:{display:true,grid:{display:false},border:{display:false},ticks:{color:'#334155',font:{size:10},maxTicksLimit:6,callback:(val,idx)=>{const step=Math.max(1,Math.floor(fd.length/6));return idx%step===0?fmtAxis(fd[idx]?.date||''):''}}},
+                    y:{display:true,position:'right',min:yMin,max:yMax,grid:{color:'rgba(30,41,59,0.15)',drawBorder:false},border:{display:false},ticks:{color:'#334155',font:{size:10},maxTicksLimit:6,callback:(v)=>{const r=Math.round(v);return(r<0?'-$':'$')+Math.abs(r).toLocaleString('en-AU');}}}
+                }
+            },
+            plugins:[linePlugin,baselinePlugin,scrubPlugin]
+        });
+        return()=>{if(chartRef.current){chartRef.current.destroy();chartRef.current=null;}};
+    },[fd, periodIsLoss, benchmarkNorm]);
+
+    const x2i=useCallback((cx)=>{
+        if(!canvasRef.current||!pts.length) return null;
+        const rect=canvasRef.current.getBoundingClientRect();const x=cx-rect.left;
+        let ci=0,md=Infinity;pts.forEach((p,i)=>{const d=Math.abs(p.x-x);if(d<md){md=d;ci=i;}});return ci;
+    },[pts]);
+
+    const onMM=useCallback((e)=>{const i=x2i(e.clientX);setHIdx(i);if(drag.active&&i!==null)setDrag(d=>({...d,end:i}));},[x2i,drag.active]);
+    const onMD=useCallback((e)=>{const i=x2i(e.clientX);if(i!==null)setDrag({start:i,end:i,active:true});},[x2i]);
+    const onMU=useCallback(()=>setDrag(d=>({...d,active:false})),[]);
+    const onML=useCallback(()=>{setHIdx(null);if(!cmpActive)setDrag({start:null,end:null,active:false});setDrag(d=>({...d,active:false}));},[cmpActive]);
+
+    const hoverX=hIdx!==null&&pts[hIdx]?pts[hIdx].x:null;
+    const hoverY=hIdx!==null&&pts[hIdx]?pts[hIdx].y:null;
+    let cx1=null,cx2=null,cy1=null,cy2=null;
+    if(cmpActive&&pts.length){
+        const si=Math.min(drag.start,drag.end),ei=Math.max(drag.start,drag.end);
+        cx1=pts[si]?.x;cx2=pts[ei]?.x;cy1=pts[si]?.y;cy2=pts[ei]?.y;
+    }
+
+    const wrapW=wrapRef.current?.offsetWidth||600;
+
+    return(
+        <div>
+            {/* Main value + subtitle return */}
+            <div className="mb-4" style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div>
+                    <div style={{fontSize:'30px',fontWeight:'700',color:'#f1f5f9',letterSpacing:'-0.02em'}}>
+                        {'A$'+headlineValue.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'4px',fontSize:'13px',fontWeight:'500',color:subtitleIsUp?'#34d399':'#f87171'}}>
+                        <span>{subtitleIsUp?'↑':'↓'}</span>
+                        <span>{subtitleIsUp?'+':'-'}${Math.abs(subtitleRet).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                        <span>({subtitleIsUp?'+':''}{subtitlePct.toFixed(2)}%)</span>
+                        <span style={{color:'#475569',fontWeight:'400',marginLeft:'2px'}}>{subtitleLabel}</span>
+                        {cmpActive&&<button onClick={()=>setDrag({start:null,end:null,active:false})} style={{marginLeft:'4px',fontSize:'11px',color:'#64748b',border:'1px solid #334155',borderRadius:'4px',padding:'1px 8px',cursor:'pointer',background:'transparent'}}>✕ Clear</button>}
+                    </div>
+                </div>
+                {/* Period returns — right side, only shown when benchmark selected */}
+                {benchmark&&(
+                    <div style={{textAlign:'right',flexShrink:0,marginLeft:'16px'}}>
+                        <div style={{fontSize:'13px',fontWeight:'600',color:defaultPeriodRet>=0?'#34d399':'#f87171'}}>
+                            {defaultPeriodRet>=0?'+':''}{defaultPeriodPct.toFixed(2)}%
+                            <span style={{fontSize:'11px',fontWeight:'400',color:'#475569',marginLeft:'5px'}}>Portfolio</span>
+                        </div>
+                        {benchmarkPct!=null&&(
+                            <div style={{fontSize:'13px',fontWeight:'600',color:benchmarkPct>=0?'#34d399':'#f87171',marginTop:'4px'}}>
+                                {benchmarkPct>=0?'+':''}{benchmarkPct.toFixed(2)}%
+                                <span style={{fontSize:'11px',fontWeight:'400',color:'#475569',marginLeft:'5px'}}>{benchmark==='ASX200'?'ASX 200':'S&P 500'}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Comparison display — outer values show portfolio value (basis+gain), centre shows change */}
+            {cmpActive&&pStart&&pEnd&&cx1!==null&&cx2!==null&&(
+                <div style={{position:'relative',height:'52px',marginBottom:'0px',overflow:'visible'}}>
+                    <div style={{position:'absolute',left:Math.max(0,cx1),top:0,transform:cx1<wrapW*0.3?'translateX(0)':'translateX(-100%)'}}>
+                        <div style={{fontSize:'11px',color:'#64748b'}}>{fmtFull(pStart.date)}</div>
+                        <div style={{fontSize:'13px',fontWeight:'600',color:'#f1f5f9',marginTop:'2px'}}>${ptValue(pStart).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                    </div>
+                    <div style={{position:'absolute',left:cx1,width:cx2-cx1,top:0,display:'flex',justifyContent:'center',alignItems:'center',pointerEvents:'none'}}>
+                        <div style={{background:cmpIsLoss?'rgba(248,113,113,0.15)':'rgba(16,185,129,0.15)',border:'1px solid '+(cmpIsLoss?'rgba(248,113,113,0.3)':'rgba(52,211,153,0.3)'),borderRadius:'6px',padding:'4px 12px',textAlign:'center',backdropFilter:'blur(4px)'}}>
+                            <div style={{fontSize:'13px',fontWeight:'700',color:cmpIsLoss?'#f87171':'#34d399'}}>{cmpRet>=0?'+':''}{cmpRet.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                            <div style={{fontSize:'11px',color:cmpIsLoss?'#f87171':'#34d399'}}>{cmpRetPct>=0?'+':''}{cmpRetPct.toFixed(2)}%</div>
+                        </div>
+                    </div>
+                    <div style={{position:'absolute',left:Math.min(cx2,wrapW-10),top:0,transform:cx2>wrapW*0.7?'translateX(-100%)':'translateX(0)'}}>
+                        <div style={{fontSize:'11px',color:'#64748b'}}>{fmtFull(pEnd.date)}</div>
+                        <div style={{fontSize:'13px',fontWeight:'600',color:'#f1f5f9',marginTop:'2px'}}>${ptValue(pEnd).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                    </div>
+                </div>
+            )}
+            {!cmpActive&&<div style={{height:'0px'}}/>}
+
+            {/* Chart area */}
+            <div ref={wrapRef} className="chart-wrapper" style={{height:'270px'}} onMouseMove={onMM} onMouseDown={onMD} onMouseUp={onMU} onMouseLeave={onML}>
+                <canvas ref={canvasRef} style={{width:'100%',height:'100%'}}></canvas>
+
+                {/* Hover crosshair */}
+                {hoverX!==null&&(
+                    <>
+                        <div style={{position:'absolute',top:0,bottom:0,left:hoverX,width:'1px',background:'rgba(255,255,255,0.15)',pointerEvents:'none',transform:'translateX(-50%)'}}/>
+                        {hoverY!==null&&<div style={{position:'absolute',left:hoverX,top:hoverY,width:'9px',height:'9px',borderRadius:'50%',background:'#10b981',border:'2px solid #fff',pointerEvents:'none',transform:'translate(-50%,-50%)',boxShadow:'0 0 6px rgba(16,185,129,0.6)'}}/>}
+                        {/* Date label at bottom of crosshair */}
+                        {dispPt&&<div style={{position:'absolute',bottom:'28px',left:Math.max(30,Math.min(hoverX,wrapW-60)),transform:'translateX(-50%)',background:'rgba(15,23,42,0.85)',border:'1px solid #1e293b',borderRadius:'4px',padding:'2px 8px',fontSize:'10px',color:'#64748b',whiteSpace:'nowrap',pointerEvents:'none',zIndex:8}}>{fmtFull(dispPt.date)}</div>}
+                    </>
+                )}
+
+                {/* Comparison band + markers — red when scrub is a loss */}
+                {cmpActive&&cx1!==null&&cx2!==null&&(
+                    <>
+                        <div style={{position:'absolute',left:cx1,width:Math.max(1,cx2-cx1),top:0,bottom:0,background:cmpIsLoss?'rgba(248,113,113,0.06)':'rgba(16,185,129,0.06)',borderLeft:'1px dashed '+(cmpIsLoss?'rgba(248,113,113,0.35)':'rgba(52,211,153,0.3)'),borderRight:'1px dashed '+(cmpIsLoss?'rgba(248,113,113,0.35)':'rgba(52,211,153,0.3)'),pointerEvents:'none'}}/>
+                        {cy1!==null&&<div style={{position:'absolute',left:cx1,top:cy1,width:'8px',height:'8px',borderRadius:'50%',background:cmpIsLoss?'#f87171':'#10b981',border:'2px solid #fff',transform:'translate(-50%,-50%)',pointerEvents:'none'}}/>}
+                        {cy2!==null&&<div style={{position:'absolute',left:cx2,top:cy2,width:'8px',height:'8px',borderRadius:'50%',background:cmpIsLoss?'#f87171':'#10b981',border:'2px solid #fff',transform:'translate(-50%,-50%)',pointerEvents:'none'}}/>}
+                    </>
+                )}
+            </div>
+
+            {/* Time filters */}
+            <div style={{display:'flex',justifyContent:'center',gap:'4px',marginTop:'12px'}}>
+                {['5D','1M','3M','6M','YTD','Y','MAX'].map(label=>{
+                    const k=label==='MAX'?'All':label;
+                    const active=tf===k||(label==='MAX'&&tf==='All');
+                    return<button key={label} onClick={()=>setTf(k)} style={{padding:'4px 12px',background:active?'#10b981':'transparent',color:active?'#fff':'#475569',border:'none',borderRadius:'20px',cursor:'pointer',fontSize:'12px',fontWeight:active?'600':'400',transition:'all 0.12s'}}>{label}</button>;
+                })}
+            </div>
+            {/* Legend */}
+            {benchmark&&<div style={{display:'flex',justifyContent:'center',gap:'16px',marginTop:'8px',fontSize:'11px',color:'#64748b'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'5px'}}><div style={{width:'14px',height:'2px',background:lineColor,borderRadius:'1px'}}/><span>Portfolio</span></div>
+                <div style={{display:'flex',alignItems:'center',gap:'5px'}}><div style={{width:'14px',height:'2px',background:'#3b82f6',borderRadius:'1px'}}/><span>{benchmark==='ASX200'?'ASX 200':'S&P 500 (AUD)'}</span></div>
+            </div>}
+            <div style={{textAlign:'center',fontSize:'11px',color:'#1e293b',marginTop:'6px'}}>Click and drag on chart to compare two points in time</div>
+        </div>
+    );
+};
+
+// ---- Sell Modal Component ----
+const SellModal = ({ holding, sellF, setSellF, onClose, onSubmit, fmtQ, title='Record Sale' }) => {
+    if (!holding) return null;
+    const isNonAUD = holding.purchaseCurrency && holding.purchaseCurrency !== 'AUD';
+    const sym = symOf(holding.purchaseCurrency||'AUD');
+    return (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 rounded-xl border border-slate-700/80 w-full max-w-sm p-6">
+                <h3 className="text-lg font-bold mb-1">Sell Position</h3>
+                <p className="text-xs text-slate-500 mb-5">{holding.tickerDisplay || holding.ticker} — {fmtQ(effQty(holding), holding.assetType)} available</p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Quantity</label>
+                        <input type="number" value={sellF.quantity} onChange={e => setSellF({ ...sellF, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.0001" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Sale Price per unit ({holding.purchaseCurrency||'AUD'})</label>
+                        <input type="number" value={sellF.salePrice} onChange={e => setSellF({ ...sellF, salePrice: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.01" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Sale Date</label>
+                        <input type="date" value={sellF.saleDate} onChange={e => setSellF({ ...sellF, saleDate: e.target.value })} max={new Date().toISOString().split('T')[0]} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" />
+                    </div>
+                    {isNonAUD && (
+                        <div>
+                            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Exchange Rate at Sale <span className="text-slate-600 normal-case">(AUD/{holding.purchaseCurrency} — e.g. 0.65 means 1 AUD = 0.65 {holding.purchaseCurrency})</span></label>
+                            <input type="number" value={sellF.saleExchangeRate||''} onChange={e => setSellF({ ...sellF, saleExchangeRate: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.0001" placeholder="Enter AUD/currency rate"/>
+                        </div>
+                    )}
+                    {sellF.quantity > 0 && sellF.salePrice > 0 && (
+                        <div className="bg-slate-800 rounded-lg p-3 text-sm space-y-1">
+                            <div><span className="text-slate-400">Proceeds ({holding.purchaseCurrency||'AUD'}): </span><span className="font-semibold text-white">{sym}{(sellF.quantity * sellF.salePrice).toLocaleString('en-AU', { minimumFractionDigits: 2 })}</span></div>
+                            {isNonAUD && sellF.saleExchangeRate > 0 && (
+                                <div><span className="text-slate-400">Proceeds (AUD): </span><span className="font-semibold text-white">${(sellF.quantity * sellF.salePrice / sellF.saleExchangeRate).toLocaleString('en-AU', { minimumFractionDigits: 2 })}</span></div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <div className="flex gap-3 mt-6">
+                    <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">Cancel</button>
+                    <button onClick={onSubmit} className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-semibold">{title}</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ImportReviewModal = ({ importRows, setImportRows, existingHoldings, onClose, onConfirm }) => {
+    const isDupe = (row) => existingHoldings.some(h =>
+        h.ticker === row.ticker &&
+        h.purchaseDate === row.purchaseDate &&
+        Math.abs(h.quantity - row.quantity) < 1e-9
+    );
+    const inpCls = "w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-slate-500";
+    const upd = (idx, field, val) => setImportRows(rows => rows.map((r,i) => i===idx ? {...r,[field]:val} : r));
+    const remove = (idx) => setImportRows(rows => rows.filter((_,i) => i!==idx));
+    const toImport = importRows.filter(r => !r._skip);
+    return (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4" style={{backdropFilter:'blur(2px)'}}>
+            <div className="bg-slate-900 rounded-xl border border-slate-700/80 w-full flex flex-col" style={{maxWidth:'900px',maxHeight:'90vh'}}>
+                <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-white">Review Import</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">{toImport.length} of {importRows.length} holdings will be imported. Edit or remove before confirming.</p>
+                    </div>
+                    <button onClick={onClose} className="text-slate-500 hover:text-white text-xl px-2">✕</button>
+                </div>
+                <div className="overflow-auto flex-1 px-4 py-3">
+                    <table className="w-full text-xs" style={{tableLayout:'fixed'}}>
+                        <colgroup>
+                            <col style={{width:'16%'}}/><col style={{width:'9%'}}/><col style={{width:'9%'}}/>
+                            <col style={{width:'10%'}}/><col style={{width:'10%'}}/><col style={{width:'9%'}}/>
+                            <col style={{width:'9%'}}/><col style={{width:'9%'}}/><col style={{width:'14%'}}/><col style={{width:'5%'}}/>
+                        </colgroup>
+                        <thead>
+                            <tr className="text-slate-500 uppercase tracking-wide border-b border-slate-800">
+                                <th className="px-2 py-2 text-left">Ticker</th>
+                                <th className="px-2 py-2 text-left">Type</th>
+                                <th className="px-2 py-2 text-left">Exchange</th>
+                                <th className="px-2 py-2 text-left">Date</th>
+                                <th className="px-2 py-2 text-left">Qty</th>
+                                <th className="px-2 py-2 text-left">Price</th>
+                                <th className="px-2 py-2 text-left">Currency</th>
+                                <th className="px-2 py-2 text-left">Position</th>
+                                <th className="px-2 py-2 text-left">Notes</th>
+                                <th className="px-2 py-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {importRows.map((row, idx) => {
+                                const dupe = isDupe(row);
+                                const skip = row._skip;
+                                return (
+                                    <tr key={idx} className={`border-b border-slate-800/50 ${skip?'opacity-40':''}`}>
+                                        <td className="px-2 py-2">
+                                            <div className="flex items-center gap-1">
+                                                {dupe && !skip && <span title="Possible duplicate" className="text-yellow-400 text-xs">⚠️</span>}
+                                                <input className={inpCls} value={row.ticker||''} onChange={e=>upd(idx,'ticker',e.target.value)} disabled={skip}/>
+                                            </div>
+                                        </td>
+                                        <td className="px-2 py-2">
+                                            <select className={inpCls} value={row.assetType||'STOCK'} onChange={e=>upd(idx,'assetType',e.target.value)} disabled={skip}>
+                                                <option value="STOCK">Stock</option>
+                                                <option value="ETF">ETF</option>
+                                                <option value="CRYPTOCURRENCY">Crypto</option>
+                                            </select>
+                                        </td>
+                                        <td className="px-2 py-2"><input className={inpCls} value={row.exchange||''} onChange={e=>upd(idx,'exchange',e.target.value)} disabled={skip}/></td>
+                                        <td className="px-2 py-2"><input type="date" className={inpCls} value={row.purchaseDate||''} onChange={e=>upd(idx,'purchaseDate',e.target.value)} disabled={skip}/></td>
+                                        <td className="px-2 py-2"><input type="number" className={inpCls} value={row.quantity||''} onChange={e=>upd(idx,'quantity',parseFloat(e.target.value)||0)} step="0.0001" disabled={skip}/></td>
+                                        <td className="px-2 py-2"><input type="number" className={inpCls} value={row.purchasePrice||''} onChange={e=>upd(idx,'purchasePrice',parseFloat(e.target.value)||0)} step="0.01" disabled={skip}/></td>
+                                        <td className="px-2 py-2">
+                                            <select className={inpCls} value={row.purchaseCurrency||'AUD'} onChange={e=>upd(idx,'purchaseCurrency',e.target.value)} disabled={skip}>
+                                                {['AUD','USD','GBP','EUR','JPY','CAD','CHF','SGD'].map(c=><option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                        </td>
+                                        <td className="px-2 py-2">
+                                            <select className={inpCls} value={row.positionType||'long'} onChange={e=>upd(idx,'positionType',e.target.value)} disabled={skip}>
+                                                <option value="long">Long</option>
+                                                <option value="short">Short</option>
+                                            </select>
+                                        </td>
+                                        <td className="px-2 py-2">
+                                            {dupe && !skip
+                                                ? <span className="text-yellow-400">Possible duplicate</span>
+                                                : <span className="text-slate-600">—</span>}
+                                        </td>
+                                        <td className="px-2 py-2 text-center">
+                                            <button
+                                                onClick={()=>upd(idx,'_skip',!skip)}
+                                                className={`px-2 py-0.5 rounded text-xs ${skip?'bg-slate-700 text-slate-300':'bg-red-900/40 hover:bg-red-900/70 text-red-400'}`}
+                                                title={skip?'Re-include':'Skip this holding'}
+                                            >{skip?'↩':'✕'}</button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+                <div className="px-6 py-4 border-t border-slate-800 flex gap-3 justify-end">
+                    <button onClick={onClose} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">Cancel</button>
+                    <button
+                        onClick={()=>onConfirm(importRows.filter(r=>!r._skip))}
+                        disabled={toImport.length===0}
+                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold"
+                    >Import {toImport.length} holding{toImport.length!==1?'s':''}</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const DividendModal = ({ holding, divF, setDivF, onClose, onSubmit, title='Record Dividend' }) => {
+    if (!holding) return null;
+    const isNonAUD = holding.purchaseCurrency && holding.purchaseCurrency !== 'AUD';
+    const sym = symOf(holding.purchaseCurrency||'AUD');
+    const netAmt = (divF.quantity||0) * ((divF.amountPerUnit||0)/100) * (isNonAUD && divF.exchangeRate > 0 ? (1/divF.exchangeRate) : 1);
+    const divisor = 1 - ((divF.frankedPct||0)/100) * 0.30;
+    const gross = divisor > 0 ? netAmt / divisor : netAmt;
+    const fc = gross * ((divF.frankedPct||0)/100) * 0.30;
+    const net = netAmt;
+    return (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 rounded-xl border border-slate-700/80 w-full max-w-sm p-6">
+                <h3 className="text-lg font-bold mb-1">{title}</h3>
+                <p className="text-xs text-slate-500 mb-5">{holding.tickerDisplay || holding.ticker}</p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Date Paid</label>
+                        <input type="date" value={divF.date} onChange={e=>setDivF({...divF,date:e.target.value})} max={new Date().toISOString().split('T')[0]} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm"/>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Amount per unit — cents ({holding.purchaseCurrency==='AUD'?'AU¢':holding.purchaseCurrency+'¢'})</label>
+                        <input type="number" value={divF.amountPerUnit||''} onChange={e=>setDivF({...divF,amountPerUnit:parseFloat(e.target.value)||0})} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.0001" placeholder="e.g. 103.8469"/>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Units held on date</label>
+                        <input type="number" value={divF.quantity||''} onChange={e=>setDivF({...divF,quantity:parseFloat(e.target.value)||0})} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.0001"/>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Franking % <span className="text-slate-600 normal-case">(0 = unfranked, 100 = fully franked)</span></label>
+                        <input type="number" value={divF.frankedPct||''} onChange={e=>setDivF({...divF,frankedPct:parseFloat(e.target.value)||0})} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" min="0" max="100" step="1"/>
+                    </div>
+                    {isNonAUD && (
+                        <div>
+                            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">AUD/{holding.purchaseCurrency} rate on payment date <span className="text-slate-600 normal-case">(e.g. 0.65)</span></label>
+                            <input type="number" value={divF.exchangeRate||''} onChange={e=>setDivF({...divF,exchangeRate:parseFloat(e.target.value)||0})} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.0001"/>
+                        </div>
+                    )}
+                    {gross > 0 && (
+                        <div className="bg-slate-800 rounded-lg p-3 text-sm space-y-1">
+                            <div><span className="text-slate-400">Gross payment: </span><span className="font-semibold text-white">${gross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                            {fc > 0 && <div><span className="text-slate-400">Franking credits: </span><span className="font-semibold text-white">${fc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>}
+                            <div><span className="text-slate-400">Net payment (cash): </span><span className="font-semibold text-emerald-400">${net.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                        </div>
+                    )}
+                </div>
+                <div className="flex gap-3 mt-6">
+                    <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">Cancel</button>
+                    <button onClick={onSubmit} className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm font-semibold">{title}</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ---- Main ----
+const App=()=>{
+    const [holdings,setHoldings]=useState(()=>{try{const s=localStorage.getItem(STORAGE_KEY);return s?JSON.parse(s):[];}catch(e){return[];}});
+    const [prices,setPrices]=useState({});
+    const [lastP,setLastP]=useState({});
+    const [rates,setRates]=useState(MOCK_RATES);
+    const [loading,setLoading]=useState(false);
+    const [updated,setUpdated]=useState(new Date());
+    const [modal,setModal]=useState(false);
+    const [sellModal,setSellModal]=useState(false);
+    const [sellId,setSellId]=useState(null);
+    const [editSaleModal,setEditSaleModal]=useState(false);
+    const [editSaleHoldingId,setEditSaleHoldingId]=useState(null);
+    const [editSaleIndex,setEditSaleIndex]=useState(null);
+    const [divModal,setDivModal]=useState(false);
+    const [divHoldingId,setDivHoldingId]=useState(null);
+    const [editDivModal,setEditDivModal]=useState(false);
+    const [editDivHoldingId,setEditDivHoldingId]=useState(null);
+    const [editDivIndex,setEditDivIndex]=useState(null);
+    const [divF,setDivF]=useState({date:new Date().toISOString().split('T')[0],amountPerUnit:0,quantity:0,frankedPct:0,exchangeRate:0});
+    const [editId,setEditId]=useState(null);
+    const [srch,setSrch]=useState([]);
+    const [form,setForm]=useState(blank());
+    const [sellF,setSellF]=useState({quantity:0,salePrice:0,saleDate:new Date().toISOString().split('T')[0],saleExchangeRate:0});
+    const [expanded,setExpanded]=useState(new Set());
+    const [salesExpanded,setSalesExpanded]=useState(new Set());
+    const [divExpanded,setDivExpanded]=useState(new Set());
+    const [divSort,setDivSort]=useState({col:null,dir:'desc'});
+    const [benchmark,setBenchmark]=useState(null);
+    const [benchmarkData,setBenchmarkData]=useState([]);
+    const [sort,setSort]=useState({col:null,dir:'desc'});
+    const [salesSort,setSalesSort]=useState({col:null,dir:'desc'});
+    const [importReview,setImportReview]=useState(null); // null or array of rows being reviewed
+    // For form: user-facing AUD/currency rate (e.g. 0.645 for AUDUSD)
+    const [fxInput,setFxInput]=useState('');
+
+    useEffect(()=>{try{localStorage.setItem(STORAGE_KEY,JSON.stringify(holdings));}catch(e){};},[holdings]);
+
+    const refresh=useCallback(async()=>{
+        setLoading(true);
+        try{
+            const[sp,cp,rd]=await Promise.all([fetchStocks(holdings),fetchCrypto(holdings),fetchRates()]);
+            const all={...sp,...cp};setPrices(all);setLastP(p=>({...p,...all}));setRates(rd.rates||MOCK_RATES);setUpdated(new Date());
+        }catch(e){console.error(e);}finally{setLoading(false);}
+    },[holdings]);
+
+    useEffect(()=>{refresh();const t=setInterval(refresh,5*60*1000);return()=>clearInterval(t);},[refresh]);
+
+    const allP=useMemo(()=>({...lastP,...prices}),[prices,lastP]);
+    const stats=useMemo(()=>calcStats(holdings,allP,rates),[holdings,allP,rates]);
+    const asBD=useMemo(()=>calcAB(holdings,allP,rates),[holdings,allP,rates]);
+    const geoBD=useMemo(()=>calcGB(holdings,allP,rates),[holdings,allP,rates]);
+    const [hist, setHist] = useState([]);
+    useEffect(() => {
+        let cancelled = false;
+        genHist(holdings, allP, rates).then(h => { if (!cancelled) setHist(h); }).catch(e => console.error('genHist error:', e));
+        return () => { cancelled = true; };
+    }, [holdings, allP, rates]);
+    useEffect(()=>{
+        if(!benchmark||!holdings.length){setBenchmarkData([]);return;}
+        let cancelled=false;
+        const earliest=holdings.reduce((e,h)=>h.purchaseDate<e?h.purchaseDate:e,new Date().toISOString().split('T')[0]);
+        const pad=n=>String(n).padStart(2,'0');
+        const now=new Date();
+        // Always fetch at least 14 months back (covers 1Y filter + buffer)
+        const yFrom=new Date(now);yFrom.setMonth(now.getMonth()-14);
+        // Also go back 2 months before earliest holding for MAX timeframe
+        const holdFrom=new Date(earliest+'T00:00:00');holdFrom.setMonth(holdFrom.getMonth()-2);
+        // Use whichever is earlier, capped at 6 years to avoid huge requests
+        const maxBack=new Date(now);maxBack.setFullYear(now.getFullYear()-6);
+        const fromD=holdFrom<yFrom?holdFrom:yFrom;
+        if(fromD<maxBack)fromD.setTime(maxBack.getTime());
+        const fromDate=`${fromD.getFullYear()}-${pad(fromD.getMonth()+1)}-${pad(fromD.getDate())}`;
+        (async()=>{
+            try{
+                if(benchmark==='ASX200'){
+                    const map=await fetchHistoricalPrices('^AXJO','',fromDate);
+                    if(!cancelled&&map) setBenchmarkData(Object.entries(map).map(([date,price])=>({date,priceAUD:price})).sort((a,b)=>a.date.localeCompare(b.date)));
+                } else if(benchmark==='SP500'){
+                    const [priceMap,fxMap]=await Promise.all([
+                        fetchHistoricalPrices('^GSPC','',fromDate),
+                        fetchHistoricalFX('USD',fromDate)
+                    ]);
+                    if(!cancelled&&priceMap){
+                        const entries=Object.entries(priceMap).map(([date,price])=>{
+                            let fx=rates['USD']||1.54;
+                            if(fxMap){let cd=new Date(date+'T12:00:00Z');if(!isNaN(cd.getTime())){for(let b=0;b<=5;b++){const s=cd.toISOString().split('T')[0];if(fxMap[s]!=null){fx=fxMap[s];break;}cd.setDate(cd.getDate()-1);}}}
+                            return{date,priceAUD:price*fx};
+                        }).sort((a,b)=>a.date.localeCompare(b.date));
+                        setBenchmarkData(entries);
+                    }
+                }
+            }catch(e){console.error('Benchmark fetch error:',e);}
+        })();
+        return()=>{cancelled=true;};
+    },[benchmark,holdings]);
+    const groups=useMemo(()=>groupH(holdings,allP,rates),[holdings,allP,rates]);
+    const salesGroups=useMemo(()=>groupS(holdings,rates),[holdings,rates]);
+    const divRows=useMemo(()=>groupD(holdings,rates),[holdings,rates]);
+
+    const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+    const srchF=async(q)=>{sf('ticker',q.toUpperCase());if(q.length>=2){const r=await searchT(q);setSrch(r);}else setSrch([]);};
+    const selR=(r)=>{
+        const at=r.type==='ETF'?'ETF':r.type==='CRYPTOCURRENCY'?'CRYPTOCURRENCY':'STOCK';
+        const ex=r.exchange==='Unknown'?'':r.exchange;
+        setForm(p=>({...p,ticker:r.ticker,tickerDisplay:r.name,assetType:at,exchange:ex,geographicExposure:defGeo(at,ex)}));
+        setSrch([]);
+    };
+
+    const openAdd=()=>{setEditId(null);setForm(blank());setFxInput('');setSrch([]);setModal(true);};
+    const openEdit=(id)=>{
+        const h=holdings.find(x=>x.id===id);if(!h) return;
+        setForm({...h,geographicExposure:h.geographicExposure||defGeo(h.assetType,h.exchange)});
+        // Convert stored rate back to AUD/currency format for display
+        setFxInput(h.purchaseExchangeRate&&h.purchaseCurrency!=='AUD'?(1/h.purchaseExchangeRate).toFixed(4):'');
+        setEditId(id);setModal(true);
+    };
+
+    const submit=()=>{
+        if(!form.ticker||!form.quantity||!form.purchasePrice){alert('Fill in ticker, quantity, and price');return;}
+        let per=null;
+        if(form.purchaseCurrency==='AUD'){
+            per=1;
+        }else if(fxInput&&parseFloat(fxInput)>0){
+            // user entered AUD/currency (e.g. 0.645 for AUDUSD)
+            // store as AUD per 1 foreign = 1/fxInput
+            per=1/parseFloat(fxInput);
+        }else{
+            // fallback to current rate
+            per=rates[form.purchaseCurrency]||1;
+        }
+        const h={...form,purchaseExchangeRate:per};
+        if(editId) setHoldings(hs=>hs.map(x=>x.id===editId?h:x));
+        else setHoldings(hs=>[...hs,h]);
+        setModal(false);setForm(blank());setFxInput('');setTimeout(refresh,500);
+    };
+
+    const delH=(id)=>{if(window.confirm('Delete this holding?'))setHoldings(hs=>hs.filter(x=>x.id!==id));};
+    const sellClick=(id)=>{
+        const h=holdings.find(x=>x.id===id);
+        const liveRate = h?.purchaseCurrency === 'AUD' ? 1 : (rates[h?.purchaseCurrency] || 0);
+        // rates[currency] = AUD per 1 foreign unit (e.g. 1.54 AUD per USD)
+        // Form shows AUD/foreign = 1/liveRate (e.g. 0.65 USD per AUD)
+        const defaultRate = liveRate > 0 ? parseFloat((1/liveRate).toFixed(4)) : 0;
+        setSellId(id);
+        setSellF({quantity:0,salePrice:0,saleDate:new Date().toISOString().split('T')[0],saleExchangeRate:defaultRate});
+        setSellModal(true);
+    };
+    const openEditSale=(holdingId,saleIndex,sale)=>{
+        setEditSaleHoldingId(holdingId);
+        setEditSaleIndex(saleIndex);
+        // saleExchangeRate stored as AUD per 1 foreign (e.g. 1.54). Form shows AUD/foreign (e.g. 0.65).
+        const displayRate = sale.saleExchangeRate > 0 ? parseFloat((1/sale.saleExchangeRate).toFixed(4)) : 0;
+        setSellF({quantity:sale.quantity,salePrice:sale.salePrice,saleDate:sale.saleDate,saleExchangeRate:displayRate});
+        setEditSaleModal(true);
+    };
+    const editSaleSub=()=>{
+        if(!sellF.quantity||!sellF.salePrice){alert('Fill in quantity and price');return;}
+        const h=holdings.find(x=>x.id===editSaleHoldingId);
+        if(!h){setEditSaleModal(false);return;}
+        // Remaining = effQty + the original qty of this sale (so we can re-validate)
+        const origSaleQty=(h.sales||[])[editSaleIndex]?.quantity||0;
+        const remaining=effQty(h)+origSaleQty;
+        if(sellF.quantity>remaining+1e-9){alert(`Cannot sell more than ${fmtQ(remaining,h.assetType)} available`);return;}
+        const isNonAUD = h.purchaseCurrency && h.purchaseCurrency !== 'AUD';
+        if(isNonAUD && (!sellF.saleExchangeRate || sellF.saleExchangeRate <= 0)){
+            alert(`Please enter the AUD/${h.purchaseCurrency} exchange rate at the time of sale`);return;
+        }
+        const saleExchangeRate = isNonAUD ? (1/sellF.saleExchangeRate) : 1;
+        const updatedSale={quantity:sellF.quantity,salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
+        setHoldings(hs=>hs.map(x=>{
+            if(x.id!==editSaleHoldingId) return x;
+            const newSales=[...(x.sales||[])];
+            newSales[editSaleIndex]=updatedSale;
+            return{...x,sales:newSales};
+        }));
+        setEditSaleModal(false);setEditSaleHoldingId(null);setEditSaleIndex(null);
+    };
+    const sellSub=()=>{
+        if(!sellF.quantity||!sellF.salePrice){alert('Fill in quantity and price');return;}
+        const h=holdings.find(x=>x.id===sellId);
+        if(!h){setSellModal(false);return;}
+        const remaining=effQty(h);
+        if(sellF.quantity>remaining+1e-9){alert(`Cannot sell more than ${fmtQ(remaining,h.assetType)} remaining`);return;}
+        const isNonAUD = h.purchaseCurrency && h.purchaseCurrency !== 'AUD';
+        if(isNonAUD && (!sellF.saleExchangeRate || sellF.saleExchangeRate <= 0)){
+            alert(`Please enter the AUD/${h.purchaseCurrency} exchange rate at the time of sale`);return;
+        }
+        // Use user-entered rate for non-AUD. For AUD holdings, rate is 1.
+        // Store as AUD per 1 foreign unit (inverted from the AUD/currency form input).
+        const saleExchangeRate = isNonAUD ? (1/sellF.saleExchangeRate) : 1;
+        const newSale={quantity:sellF.quantity,salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
+        setHoldings(hs=>hs.map(x=>x.id===sellId?{...x,sales:[...(x.sales||[]),newSale]}:x));
+        setSellModal(false);setSellId(null);
+    };
+    const delSale=(holdingId,saleIndex)=>{
+        if(!window.confirm('Delete this sale? The units will return to the holding.'))return;
+        setHoldings(hs=>hs.map(h=>h.id!==holdingId?h:{...h,sales:(h.sales||[]).filter((_,i)=>i!==saleIndex)}));
+    };
+    const divClick=(id)=>{
+        const h=holdings.find(x=>x.id===id);
+        const liveRate=h?.purchaseCurrency==='AUD'?1:(rates[h?.purchaseCurrency]||0);
+        const defaultRate=liveRate>0?parseFloat((1/liveRate).toFixed(4)):0;
+        const qty=effQty(h)||h?.quantity||0;
+        setDivHoldingId(id);
+        setDivF({date:new Date().toISOString().split('T')[0],amountPerUnit:0,quantity:qty,frankedPct:0,exchangeRate:defaultRate});
+        setDivModal(true);
+    };
+    const divSub=()=>{
+        if(!divF.amountPerUnit||!divF.quantity){alert('Fill in amount per unit and quantity');return;}
+        const h=holdings.find(x=>x.id===divHoldingId);
+        if(!h){setDivModal(false);return;}
+        const isNonAUD=h.purchaseCurrency&&h.purchaseCurrency!=='AUD';
+        if(isNonAUD&&(!divF.exchangeRate||divF.exchangeRate<=0)){alert(`Please enter the AUD/${h.purchaseCurrency} exchange rate`);return;}
+        const newDiv={date:divF.date,amountPerUnit:(divF.amountPerUnit||0)/100,quantity:divF.quantity,frankedPct:divF.frankedPct||0,currency:h.purchaseCurrency,exchangeRate:divF.exchangeRate||0};
+        setHoldings(hs=>hs.map(x=>x.id===divHoldingId?{...x,dividends:[...(x.dividends||[]),newDiv]}:x));
+        setDivModal(false);setDivHoldingId(null);
+    };
+    const openEditDiv=(holdingId,divIndex,div)=>{
+        const h=holdings.find(x=>x.id===holdingId);
+        const displayRate=div.exchangeRate>0?parseFloat((1/div.exchangeRate).toFixed(4)):0;
+        setEditDivHoldingId(holdingId);setEditDivIndex(divIndex);
+        setDivF({date:div.date,amountPerUnit:(div.amountPerUnit||0)*100,quantity:div.quantity,frankedPct:div.frankedPct||0,exchangeRate:div.exchangeRate>0?displayRate:0});
+        setEditDivModal(true);
+    };
+    const editDivSub=()=>{
+        if(!divF.amountPerUnit||!divF.quantity){alert('Fill in amount per unit and quantity');return;}
+        const h=holdings.find(x=>x.id===editDivHoldingId);
+        if(!h){setEditDivModal(false);return;}
+        const updatedDiv={date:divF.date,amountPerUnit:(divF.amountPerUnit||0)/100,quantity:divF.quantity,frankedPct:divF.frankedPct||0,currency:h.purchaseCurrency,exchangeRate:divF.exchangeRate>0?(1/divF.exchangeRate):0};
+        setHoldings(hs=>hs.map(x=>{
+            if(x.id!==editDivHoldingId)return x;
+            const newDivs=[...(x.dividends||[])];newDivs[editDivIndex]=updatedDiv;
+            return{...x,dividends:newDivs};
+        }));
+        setEditDivModal(false);setEditDivHoldingId(null);setEditDivIndex(null);
+    };
+    const delDiv=(holdingId,divIndex)=>{
+        if(!window.confirm('Delete this dividend?'))return;
+        setHoldings(hs=>hs.map(h=>h.id!==holdingId?h:{...h,dividends:(h.dividends||[]).filter((_,i)=>i!==divIndex)}));
+    };
+    const togExp=(t)=>setExpanded(s=>{const n=new Set(s);n.has(t)?n.delete(t):n.add(t);return n;});
+    const togSalesExp=(t)=>setSalesExpanded(s=>{const n=new Set(s);n.has(t)?n.delete(t):n.add(t);return n;});
+    const togDivExp=(t)=>setDivExpanded(s=>{const n=new Set(s);n.has(t)?n.delete(t):n.add(t);return n;});
+    const onDivSort=(col)=>setDivSort(s=>({col,dir:s.col===col&&s.dir==='desc'?'asc':'desc'}));
+    const divSortIcon=(col)=><span style={{display:'inline-block',marginLeft:'4px',fontSize:'10px',whiteSpace:'nowrap',color:divSort.col===col?'#94a3b8':'#475569'}}>{divSort.col===col?(divSort.dir==='desc'?'↓':'↑'):'↓↑'}</span>;
+    const sortedDivGroups=useMemo(()=>{
+        if(!divSort.col) return divRows;
+        return [...divRows].sort((a,b)=>{
+            let av=a[divSort.col],bv=b[divSort.col];
+            if(av===null||av===undefined) av=divSort.dir==='desc'?-Infinity:Infinity;
+            if(bv===null||bv===undefined) bv=divSort.dir==='desc'?-Infinity:Infinity;
+            if(typeof av==='string') return divSort.dir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+            return divSort.dir==='asc'?av-bv:bv-av;
+        });
+    },[divRows,divSort]);
+
+    const ACOLS=['#10b981','#3b82f6','#f59e0b'];
+    const GCOLS=['#3b82f6','#10b981','#8b5cf6','#f59e0b','#6b7280'];
+    const gt=form.geographicExposure?(form.geographicExposure.us||0)+(form.geographicExposure.aus||0)+(form.geographicExposure.eu||0)+(form.geographicExposure.asia||0)+(form.geographicExposure.other||0):0;
+
+    // Current AUD/currency rate for hint in form
+    const currentAUDRate=form.purchaseCurrency!=='AUD'?(1/(rates[form.purchaseCurrency]||1)).toFixed(4):'';
+
+    const sign=(v,prefix='')=>v>=0?`+${prefix}`:prefix===''?'-':'-';
+    const clr=(v)=>v>=0?'text-emerald-400':'text-red-400';
+    const onSort=(col)=>setSort(s=>({col,dir:s.col===col&&s.dir==='desc'?'asc':'desc'}));
+    const sortIcon=(col)=><span style={{display:'inline-block',marginLeft:'4px',fontSize:'10px',whiteSpace:'nowrap',color:sort.col===col?'#94a3b8':'#475569'}}>{sort.col===col?(sort.dir==='desc'?'↓':'↑'):'↓↑'}</span>;
+    const onSalesSort=(col)=>setSalesSort(s=>({col,dir:s.col===col&&s.dir==='desc'?'asc':'desc'}));
+    const salesSortIcon=(col)=><span style={{display:'inline-block',marginLeft:'4px',fontSize:'10px',whiteSpace:'nowrap',color:salesSort.col===col?'#94a3b8':'#475569'}}>{salesSort.col===col?(salesSort.dir==='desc'?'↓':'↑'):'↓↑'}</span>;
+    const sortedSalesGroups=useMemo(()=>{
+        if(!salesSort.col) return salesGroups;
+        return [...salesGroups].sort((a,b)=>{
+            let av=a[salesSort.col],bv=b[salesSort.col];
+            if(av===null||av===undefined) av=salesSort.dir==='desc'?-Infinity:Infinity;
+            if(bv===null||bv===undefined) bv=salesSort.dir==='desc'?-Infinity:Infinity;
+            if(typeof av==='string') return salesSort.dir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+            return salesSort.dir==='asc'?av-bv:bv-av;
+        });
+    },[salesGroups,salesSort]);
+    const sortedGroups=useMemo(()=>{
+        if(!sort.col) return groups;
+        return [...groups].sort((a,b)=>{
+            let av=a[sort.col],bv=b[sort.col];
+            if(av===null||av===undefined) av=sort.dir==='desc'?-Infinity:Infinity;
+            if(bv===null||bv===undefined) bv=sort.dir==='desc'?-Infinity:Infinity;
+            if(typeof av==='string') return sort.dir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+            return sort.dir==='asc'?av-bv:bv-av;
+        });
+    },[groups,sort]);
+
+    return(
+        <div className="min-h-screen bg-slate-950 text-white p-4 sm:p-6">
+            <div className="max-w-7xl mx-auto">
+
+                {/* Header */}
+                <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
+                    <div>
+                        <h1 className="text-2xl font-bold">Portfolio Tracker</h1>
+                        <div className="text-xs text-slate-600 mt-1">Updated: {updated.toLocaleTimeString()}{loading&&<span className="text-blue-400 ml-2">• Refreshing...</span>}</div>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={refresh} disabled={loading} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm disabled:opacity-40">🔄</button>
+                        <button onClick={()=>{const s=JSON.stringify({holdings,date:new Date().toISOString()},null,2);const u=URL.createObjectURL(new Blob([s],{type:'application/json'}));const a=document.createElement('a');a.href=u;a.download='portfolio_'+new Date().toISOString().split('T')[0]+'.json';a.click();}} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">📥 Export</button>
+                        <button onClick={()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const imported=d.holdings||d;if(!Array.isArray(imported))throw new Error('Invalid format');setImportReview(imported.map(h=>({...h,_skip:false})));}catch(err){alert('Invalid file: '+err.message);}};r.readAsText(f);};i.click();}} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">📤 Import</button>
+                        <button onClick={openAdd} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm font-medium">➕ Add</button>
+                    </div>
+                </div>
+
+                {/* Sharesight-style summary bar */}
+                <div className="ss-bar mb-6">
+                    {/* Portfolio Value */}
+                    <div className="ss-cell" style={{background:'rgba(15,23,42,0.8)'}}>
+                        <div className="ss-label">Portfolio value</div>
+                        <div style={{fontSize:'22px',fontWeight:'700',color:'#f1f5f9',lineHeight:'1.2'}}>AU${stats.total.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                        <div className="ss-amt">On {today()}</div>
+                    </div>
+                    {/* Capital Gain */}
+                    <div className="ss-cell" style={{background:'rgba(15,23,42,0.6)'}}>
+                        <div className="ss-label">Capital gain</div>
+                        <div className={`ss-pct ${clr(stats.capTotal)}`}>{stats.capPct>=0?'+':''}{stats.capPct.toFixed(2)}%</div>
+                        <div className={`ss-amt ${clr(stats.capTotal)}`}>{stats.capTotal>=0?'+':'-'}${Math.abs(stats.capTotal).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                    </div>
+                    {/* Income */}
+                    <div className="ss-cell" style={{background:'rgba(15,23,42,0.6)'}}>
+                        <div className="ss-label">Income</div>
+                        {stats.incomeTotal>0
+                            ?<><div className={`ss-pct ${clr(stats.incomeTotal)}`}>+{stats.incomePct.toFixed(2)}%</div><div className={`ss-amt ${clr(stats.incomeTotal)}`}>+${stats.incomeTotal.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></>
+                            :<><div className="ss-pct text-slate-500">0.00%</div><div className="ss-amt text-slate-600">$0.00</div></>
+                        }
+                    </div>
+                    {/* Currency Gain — grayed out when no FX impact */}
+                    <div className="ss-cell" style={{background:'rgba(15,23,42,0.6)'}}>
+                        <div className="ss-label">Currency gain</div>
+                        {Math.abs(stats.fxTotal) < 0.01
+                            ? <>
+                                <div className="ss-pct text-slate-600">0.00%</div>
+                                <div className="ss-amt text-slate-700">$0.00</div>
+                              </>
+                            : <>
+                                <div className={`ss-pct ${clr(stats.fxTotal)}`}>{stats.fxPct>=0?'+':''}{stats.fxPct.toFixed(2)}%</div>
+                                <div className={`ss-amt ${clr(stats.fxTotal)}`}>{stats.fxTotal>=0?'+':'-'}${Math.abs(stats.fxTotal).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                              </>
+                        }
+                    </div>
+                    {/* Total Return */}
+                    <div className="ss-cell" style={{background:'rgba(15,23,42,0.6)'}}>
+                        <div className="ss-label">Total return</div>
+                        <div className={`ss-pct ${clr(stats.pnl)}`}>{stats.returnPct>=0?'+':''}{stats.returnPct.toFixed(2)}%</div>
+                        <div className={`ss-amt ${clr(stats.pnl)}`}>{stats.pnl>=0?'+':'-'}${Math.abs(stats.pnl).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                    </div>
+                </div>
+
+                {/* Small sub-cards for Stocks/ETFs/Crypto */}
+                <div className="sub-cards">
+                    {[{l:'Stocks',v:stats.S.v,p:stats.S.p},{l:'ETFs',v:stats.E.v,p:stats.E.p},{l:'Crypto',v:stats.C.v,p:stats.C.p}].map((c,i)=>(
+                        <div key={i} className="sub-card">
+                            <div className="sub-label">{c.l}</div>
+                            <div className="sub-val">${c.v.toLocaleString('en-AU',{maximumFractionDigits:0})}</div>
+                            <div className={`sub-pnl ${clr(c.p)}`}>{c.p>=0?'+':'-'}${Math.abs(c.p).toLocaleString('en-AU',{maximumFractionDigits:0})}</div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Chart */}
+                <div className="bg-slate-900 rounded-xl p-6 border border-slate-800/50 mb-8">
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+                        <div className="text-xs text-slate-600 uppercase tracking-wide">Performance</div>
+                        <select
+                            value={benchmark||''}
+                            onChange={e=>setBenchmark(e.target.value||null)}
+                            style={{background:'#1e293b',color:'#94a3b8',border:'1px solid #334155',borderRadius:'6px',padding:'4px 8px',fontSize:'11px',cursor:'pointer',outline:'none'}}
+                        >
+                            <option value=''>No benchmark</option>
+                            <option value='ASX200'>vs ASX 200</option>
+                            <option value='SP500'>vs S&P 500</option>
+                        </select>
+                    </div>
+                    {hist.length>0?<StakeChart data={hist} totalValue={stats.total} totalPnl={stats.pnl} totalReturnPct={stats.returnPct} earliestPurchaseDate={holdings.reduce((e,h)=>(!e||h.purchaseDate<e)?h.purchaseDate:e,null)} benchmark={benchmark} setBenchmark={setBenchmark} benchmarkData={benchmarkData}/>:<div className="text-slate-600 text-sm text-center py-8">Add holdings to see performance</div>}
+                </div>
+
+                {/* Holdings */}
+                <div className="mb-8">
+                    <h2 className="text-base font-semibold text-slate-300 mb-4">Holdings</h2>
+                    {holdings.length===0?(
+                        <div className="bg-slate-900 rounded-xl p-12 border border-slate-800/50 text-center text-slate-600 text-sm">No holdings yet — click Add to get started</div>
+                    ):(
+                        <div className="bg-slate-900 rounded-xl border border-slate-800/50 overflow-x-auto">
+                            <table className="w-full text-sm" style={{tableLayout:'fixed',minWidth:'1050px'}}>
+                                <colgroup>
+                                    <col style={{width:'16%'}}/>
+                                    <col style={{width:'7%'}}/>
+                                    <col style={{width:'10%'}}/>
+                                    <col style={{width:'6%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'8%'}}/>
+                                    <col style={{width:'6%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'8%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'3%'}}/>
+                                </colgroup>
+                                <thead>
+                                    <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-600">
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('ticker')}>Asset {sortIcon('ticker')}</th>
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('exchange')}>Exchange {sortIcon('exchange')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('curPrice')}>Buy Price {sortIcon('curPrice')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tQty')}>Qty {sortIcon('tQty')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tCurAUD')}>Value (AUD) {sortIcon('tCurAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tCapAUD')}>Capital ($) {sortIcon('tCapAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tCapPct')}>Capital (%) {sortIcon('tCapPct')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('wFx')}>FX (%) {sortIcon('wFx')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tPnlAUD')}>Return ($) {sortIcon('tPnlAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSort('tReturnPct')}>Return (%) {sortIcon('tReturnPct')}</th>
+                                        <th className="px-4 py-3 text-center whitespace-nowrap">Actions</th>
+                                        <th className="px-2"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedGroups.map(g=>{
+                                        const isExp=expanded.has(g.ticker);
+                                        const exD=normEx(g.exchange,g.assetType);
+                                        const s=symOf(g.purchaseCurrency);
+                                        // Strip exchange suffixes (.AX, .L, .TO etc.) from display ticker
+                                        const cleanTicker=g.ticker.replace(/\.(AX|L|TO|DE|PA|AS|T|HK|SI|NZ|NZX)$/i,'');
+                                        const tl=cleanTicker+(exD!=='Crypto'?' | '+exD:'');
+                                        return(
+                                            <React.Fragment key={g.ticker}>
+                                                <tr className="border-b border-slate-800/40 hover:bg-slate-800/15 transition-colors">
+                                                    <td className="px-4 py-3" style={{overflow:'hidden'}}><div className="font-semibold text-white text-sm truncate">{tl}</div><div className="text-xs text-slate-500 mt-0.5 truncate">{g.tickerDisplay||g.ticker}</div></td>
+                                                    <td className="px-4 py-3"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{exD}</span></td>
+                                                    <td className="px-4 py-3 text-right"><div className="font-medium text-white">{s}{g.curPrice.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><div className="text-xs text-slate-500">Avg Buy: {s}{g.avgEntry.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>{g.isStale&&<div className="text-xs text-orange-400">⚠ Stale</div>}</td>
+                                                    <td className="px-4 py-3 text-right text-white">{fmtQ(g.tQty,g.assetType)}</td>
+                                                    <td className="px-4 py-3 text-right font-medium text-white">${g.tCurAUD.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    {/* Capital $ = price gain only, no FX */}
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(g.tCapAUD)}`}>{g.tCapAUD>=0?'+':'-'}${Math.abs(g.tCapAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    {/* Capital % = pure price % */}
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(g.tCapPct)}`}>{g.tCapPct>=0?'+':''}{g.tCapPct.toFixed(2)}%</td>
+                                                    {/* FX % */}
+                                                    <td className={`px-4 py-3 text-right font-medium ${g.purchaseCurrency==='AUD'?'text-slate-500':g.wFx===null?'text-slate-500':clr(g.wFx||0)}`}>{g.purchaseCurrency==='AUD'?'—':g.wFx===null?<span className="text-slate-600 text-xs">Set rate*</span>:(g.wFx>=0?'+':'')+g.wFx.toFixed(2)+'%'}</td>
+                                                    {/* Return $ = total including FX */}
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(g.tPnlAUD)}`}>{g.tPnlAUD>=0?'+':'-'}${Math.abs(g.tPnlAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    {/* Return % */}
+                                                    <td className={`px-4 py-3 text-right font-bold ${clr(g.tReturnPct)}`}>{g.tReturnPct>=0?'+':''}{g.tReturnPct.toFixed(2)}%</td>
+                                                    <td className="px-4 py-3 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>divClick(g.lots[0].id)} className="p-1 hover:bg-emerald-900/25 rounded text-xs" title="Record Dividend">📊</button><button onClick={()=>sellClick(g.lots[0].id)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Sell">🛍️</button><button onClick={()=>openEdit(g.lots[0].id)} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit">✏️</button><button onClick={()=>delH(g.lots[0].id)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete">🗑️</button></div></td>
+                                                    <td className="px-2 text-center">{g.lots.length>1&&<span className={`chevron text-slate-500 ${isExp?'open':''}`} onClick={()=>togExp(g.ticker)}>▶</span>}</td>
+                                                </tr>
+                                                {isExp&&g.lots.map((lot,li)=>{
+                                                    const lp=allP[lot.id]||lot.purchasePrice;
+                                                    const lm=calcM(lot,lp,rates);
+                                                    const ls=symOf(lot.purchaseCurrency);
+                                                    return(
+                                                        <tr key={lot.id} className="border-b border-slate-800/20 lot-row">
+                                                            <td className="px-4 py-2 pl-10 text-xs text-slate-500">Lot {li+1} — {(()=>{const d=new Date(lot.purchaseDate+'T00:00:00');return d.getDate()+' '+MONTHS[d.getMonth()]+' '+d.getFullYear();})()}</td>
+                                                            <td className="px-4 py-2"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{normEx(lot.exchange,lot.assetType)}</span></td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{ls}{lot.purchasePrice.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{fmtQ(effQty(lot),lot.assetType)}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">${lm.cvAUD.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(lm.capitalAUD)}`}>{lm.capitalAUD>=0?'+':'-'}${Math.abs(lm.capitalAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(lm.capitalPct)}`}>{lm.capitalPct>=0?'+':''}{lm.capitalPct.toFixed(2)}%</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${lot.purchaseCurrency==='AUD'?'text-slate-500':lm.fxPct===null?'text-slate-600':clr(lm.fxPct||0)}`}>{lot.purchaseCurrency==='AUD'?'—':lm.fxPct===null?'?':(lm.fxPct>=0?'+':'')+lm.fxPct.toFixed(2)+'%'}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(lm.pnlAUD)}`}>{lm.pnlAUD>=0?'+':'-'}${Math.abs(lm.pnlAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs font-semibold ${clr(lm.returnPct)}`}>{lm.returnPct>=0?'+':''}{lm.returnPct.toFixed(2)}%</td>
+                                                            <td className="px-4 py-2 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>openEdit(lot.id)} className="p-1 hover:bg-blue-900/25 rounded text-xs">✏️</button><button onClick={()=>delH(lot.id)} className="p-1 hover:bg-red-900/25 rounded text-xs">🗑️</button></div></td>
+                                                            <td></td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            {groups.some(g=>g.wFx===null&&g.purchaseCurrency!=='AUD')&&(
+                                <div className="px-4 py-2 text-xs text-slate-600 border-t border-slate-800/40">* Edit the holding and enter the AUD/currency rate at time of purchase to calculate FX impact</div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Sales */}
+                {salesGroups.length>0&&(
+                    <div className="mb-8">
+                        <h2 className="text-base font-semibold text-slate-300 mb-4">Sales</h2>
+                        <div className="bg-slate-900 rounded-xl border border-slate-800/50 overflow-x-auto">
+                            <table className="w-full text-sm" style={{tableLayout:'fixed',minWidth:'1050px'}}>
+                                <colgroup>
+                                    <col style={{width:'16%'}}/>
+                                    <col style={{width:'7%'}}/>
+                                    <col style={{width:'10%'}}/>
+                                    <col style={{width:'6%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'8%'}}/>
+                                    <col style={{width:'6%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'8%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'3%'}}/>
+                                </colgroup>
+                                <thead>
+                                    <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-600">
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('ticker')}>Asset {salesSortIcon('ticker')}</th>
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('exchange')}>Exchange {salesSortIcon('exchange')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('avgSalePrice')}>Sale Price {salesSortIcon('avgSalePrice')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalSoldQty')}>Qty {salesSortIcon('totalSoldQty')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalProceedsAUD')}>Value (AUD) {salesSortIcon('totalProceedsAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalCapitalAUD')}>Capital ($) {salesSortIcon('totalCapitalAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalCapitalPct')}>Capital (%) {salesSortIcon('totalCapitalPct')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('wFx')}>FX (%) {salesSortIcon('wFx')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalReturnAUD')}>Return ($) {salesSortIcon('totalReturnAUD')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onSalesSort('totalReturnPct')}>Return (%) {salesSortIcon('totalReturnPct')}</th>
+                                        <th className="px-4 py-3 text-center whitespace-nowrap">Actions</th>
+                                        <th className="px-2"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedSalesGroups.map(sg=>{
+                                        const isExp=salesExpanded.has(sg.ticker);
+                                        const exD=normEx(sg.exchange,sg.assetType);
+                                        const s=symOf(sg.purchaseCurrency);
+                                        const cleanTicker=sg.ticker.replace(/\.(AX|L|TO|DE|PA|AS|T|HK|SI|NZ|NZX)$/i,'');
+                                        const tl=cleanTicker+(exD!=='Crypto'?' | '+exD:'');
+                                        return(
+                                            <React.Fragment key={'s_'+sg.ticker}>
+                                                <tr className="border-b border-slate-800/40 hover:bg-slate-800/15 transition-colors">
+                                                    <td className="px-4 py-3" style={{overflow:'hidden'}}><div className="font-semibold text-white text-sm truncate">{tl}</div><div className="text-xs text-slate-500 mt-0.5 truncate">{sg.tickerDisplay||sg.ticker}</div></td>
+                                                    <td className="px-4 py-3"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{exD}</span></td>
+                                                    <td className="px-4 py-3 text-right"><div className="font-medium text-white">{s}{sg.avgSalePrice.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></td>
+                                                    <td className="px-4 py-3 text-right text-white">{fmtQ(sg.totalSoldQty,sg.assetType)}</td>
+                                                    <td className="px-4 py-3 text-right font-medium text-white">${sg.totalProceedsAUD.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(sg.totalCapitalAUD)}`}>{sg.totalCapitalAUD>=0?'+':'-'}${Math.abs(sg.totalCapitalAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(sg.totalCapitalPct)}`}>{sg.totalCapitalPct>=0?'+':''}{sg.totalCapitalPct.toFixed(2)}%</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${sg.purchaseCurrency==='AUD'?'text-slate-500':sg.wFx===null?'text-slate-500':clr(sg.wFx||0)}`}>{sg.purchaseCurrency==='AUD'?'—':sg.wFx===null?'—':(sg.wFx>=0?'+':'')+sg.wFx.toFixed(2)+'%'}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${clr(sg.totalReturnAUD)}`}>{sg.totalReturnAUD>=0?'+':'-'}${Math.abs(sg.totalReturnAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className={`px-4 py-3 text-right font-bold ${clr(sg.totalReturnPct)}`}>{sg.totalReturnPct>=0?'+':''}{sg.totalReturnPct.toFixed(2)}%</td>
+                                                    <td className="px-4 py-3 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>openEditSale(sg.sales[0].holdingId,sg.sales[0].saleIndex,sg.sales[0])} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit sale">✏️</button><button onClick={()=>delSale(sg.sales[0].holdingId,sg.sales[0].saleIndex)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete sale">🗑️</button></div></td>
+                                                    <td className="px-2 text-center">{sg.sales.length>1&&<span className={`chevron text-slate-500 ${isExp?'open':''}`} onClick={()=>togSalesExp(sg.ticker)}>▶</span>}</td>
+                                                </tr>
+                                                {isExp&&sg.sales.map((sale,si)=>{
+                                                    const ls=symOf(sg.purchaseCurrency);
+                                                    const sd=new Date(sale.saleDate+'T00:00:00');
+                                                    const dateLabel=sd.getDate()+' '+MONTHS[sd.getMonth()]+' '+sd.getFullYear();
+                                                    return(
+                                                        <tr key={'sale_'+sg.ticker+'_'+si} className="border-b border-slate-800/20 lot-row">
+                                                            <td className="px-4 py-2 pl-10 text-xs text-slate-500">Sale {si+1} — {dateLabel}</td>
+                                                            <td className="px-4 py-2"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{exD}</span></td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{ls}{sale.salePrice.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{fmtQ(sale.quantity,sg.assetType)}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">${sale.proceedsAUD.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(sale.capitalAUD)}`}>{sale.capitalAUD>=0?'+':'-'}${Math.abs(sale.capitalAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(sale.capitalPct)}`}>{sale.capitalPct>=0?'+':''}{sale.capitalPct.toFixed(2)}%</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${sale.purchaseCurrency==='AUD'?'text-slate-500':sale.fxPct===null?'text-slate-600':clr(sale.fxPct||0)}`}>{sale.purchaseCurrency==='AUD'?'—':(sale.fxPct>=0?'+':'')+sale.fxPct.toFixed(2)+'%'}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${clr(sale.returnAUD)}`}>{sale.returnAUD>=0?'+':'-'}${Math.abs(sale.returnAUD).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs font-semibold ${clr(sale.returnPct)}`}>{sale.returnPct>=0?'+':''}{sale.returnPct.toFixed(2)}%</td>
+                                                            <td className="px-4 py-2 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>openEditSale(sale.holdingId,sale.saleIndex,sale)} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit sale">✏️</button><button onClick={()=>delSale(sale.holdingId,sale.saleIndex)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete sale">🗑️</button></div></td>
+                                                            <td className="px-2"></td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* Breakdown */}
+                {holdings.length>0&&(
+                    <div className="mb-8">
+                {/* Dividends */}
+                {divRows.length>0&&(
+                    <div className="mb-8">
+                        <h2 className="text-base font-semibold text-slate-300 mb-4">Dividends</h2>
+                        <div className="bg-slate-900 rounded-xl border border-slate-800/50 overflow-x-auto">
+                            <table className="w-full text-sm" style={{tableLayout:'fixed',minWidth:'1050px'}}>
+                                <colgroup>
+                                    <col style={{width:'16%'}}/>
+                                    <col style={{width:'7%'}}/>
+                                    <col style={{width:'10%'}}/>
+                                    <col style={{width:'11%'}}/>
+                                    <col style={{width:'11%'}}/>
+                                    <col style={{width:'11%'}}/>
+                                    <col style={{width:'11%'}}/>
+                                    <col style={{width:'11%'}}/>
+                                    <col style={{width:'9%'}}/>
+                                    <col style={{width:'3%'}}/>
+                                </colgroup>
+                                <thead>
+                                    <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-600">
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('ticker')}>Asset {divSortIcon('ticker')}</th>
+                                        <th className="px-4 py-3 text-left cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('exchange')}>Exchange {divSortIcon('exchange')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('lastDate')}>Last Paid {divSortIcon('lastDate')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('paymentCount')}># Payments {divSortIcon('paymentCount')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('paymentCount')}>Units Held {divSortIcon('paymentCount')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalGross')}>Gross Total {divSortIcon('totalGross')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalFc')}>Franking Credits {divSortIcon('totalFc')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalNet')}>Net Total {divSortIcon('totalNet')}</th>
+                                        <th className="px-4 py-3 text-center whitespace-nowrap">Actions</th>
+                                        <th className="px-2"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedDivGroups.map(dg=>{
+                                        const isExp=divExpanded.has(dg.ticker);
+                                        const cleanTicker=dg.ticker.replace(/\.(AX|L|TO|DE|PA|AS|T|HK|SI|NZ|NZX)$/i,'');
+                                        const tl=cleanTicker+(dg.exD!=='Crypto'?' | '+dg.exD:'');
+                                        const sym=symOf(dg.purchaseCurrency);
+                                        return(
+                                            <React.Fragment key={'dg_'+dg.ticker}>
+                                                <tr className="border-b border-slate-800/40 hover:bg-slate-800/15 transition-colors">
+                                                    <td className="px-4 py-3" style={{overflow:'hidden'}}><div className="font-semibold text-white text-sm truncate">{tl}</div><div className="text-xs text-slate-500 mt-0.5 truncate">{dg.tickerDisplay||dg.ticker}</div></td>
+                                                    <td className="px-4 py-3"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{dg.exD}</span></td>
+                                                    <td className="px-4 py-3 text-right text-white text-sm">{(()=>{const sd=new Date(dg.lastDate+'T00:00:00');return sd.getDate()+' '+MONTHS[sd.getMonth()]+' '+sd.getFullYear();})()}</td>
+                                                    <td className="px-4 py-3 text-right text-white">{dg.paymentCount}</td>
+                                                    <td className="px-4 py-3 text-right text-white">{dg.payments[0]?.quantity||'—'}</td>
+                                                    <td className="px-4 py-3 text-right font-medium text-white">AU${dg.totalGross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${dg.totalFc>0?'text-emerald-400':'text-slate-500'}`}>{dg.totalFc>0?'AU$'+dg.totalFc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
+                                                    <td className="px-4 py-3 text-right font-bold text-emerald-400">AU${dg.totalNet.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <div className="flex gap-1 justify-center">
+                                                            <button onClick={()=>openEditDiv(dg.payments[0].holdingId,dg.payments[0].divIndex,dg.payments[0])} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit">✏️</button>
+                                                            <button onClick={()=>delDiv(dg.payments[0].holdingId,dg.payments[0].divIndex)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete">🗑️</button>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-2 text-center">{dg.payments.length>1&&<span className={`chevron text-slate-500 ${isExp?'open':''}`} onClick={()=>togDivExp(dg.ticker)}>▶</span>}</td>
+                                                </tr>
+                                                {isExp&&dg.payments.map((p,pi)=>{
+                                                    const sd=new Date(p.date+'T00:00:00');
+                                                    const dateLabel=sd.getDate()+' '+MONTHS[sd.getMonth()]+' '+sd.getFullYear();
+                                                    return(
+                                                        <tr key={'dp_'+dg.ticker+'_'+pi} className="border-b border-slate-800/20 lot-row">
+                                                            <td className="px-4 py-2 pl-10 text-xs text-slate-500 whitespace-nowrap">Payment {pi+1} — {dateLabel}</td>
+                                                            <td className="px-4 py-2"><span className="px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-300">{dg.exD}</span></td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{dateLabel}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{(()=>{const c=p.amountPerUnit*100;const cur=p.currency||dg.purchaseCurrency||'AUD';const sym=({AUD:'AU¢',USD:'US¢',GBP:'p',EUR:'c',CAD:'CA¢',SGD:'SG¢',CHF:'Rp',JPY:'sen',CNY:'fen',INR:'p'}[cur])||(cur+'¢');return (Number.isInteger(c)?c.toFixed(0):c.toLocaleString('en-AU',{maximumFractionDigits:4}))+' '+sym+'/unit';})()}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">{fmtQ(p.quantity,null)}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">AU${p.gross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${p.fc>0?'text-emerald-400':'text-slate-600'}`}>{p.fc>0?'AU$'+p.fc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-emerald-400">AU${p.net.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className="px-4 py-2 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>openEditDiv(p.holdingId,p.divIndex,p)} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit">✏️</button><button onClick={()=>delDiv(p.holdingId,p.divIndex)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete">🗑️</button></div></td>
+                                                            <td className="px-2"></td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                        <h2 className="text-base font-semibold text-slate-300 mb-4">Portfolio Breakdown</h2>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {asBD.length>0&&<div className="bg-slate-900 rounded-xl p-6 border border-slate-800/50"><h3 className="text-xs text-slate-500 uppercase tracking-wide mb-4 text-center">By Asset Type</h3><Pie data={asBD} colors={ACOLS} title="Total"/></div>}
+                            {geoBD.length>0&&<div className="bg-slate-900 rounded-xl p-6 border border-slate-800/50"><h3 className="text-xs text-slate-500 uppercase tracking-wide mb-4 text-center">By Geography</h3><Pie data={geoBD} colors={GCOLS} title="Exposure"/></div>}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Add/Edit Modal */}
+            {modal&&(
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                    <div className="bg-slate-900 rounded-xl border border-slate-700/80 w-full max-w-md max-h-[90vh] overflow-y-auto p-6">
+                        <h2 className="text-lg font-bold mb-5">{editId?'Edit Holding':'Add Holding'}</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Ticker / Search</label>
+                                <div className="relative">
+                                    <input type="text" value={form.ticker} onChange={e=>{sf('ticker',e.target.value.toUpperCase());srchF(e.target.value);}} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-sm" placeholder="e.g. IVV.AX, NVDA, BTC"/>
+                                    {srch.length>0&&(
+                                        <div className="absolute top-full left-0 right-0 bg-slate-800 border border-slate-600 rounded-lg mt-1 z-20 max-h-52 overflow-y-auto shadow-2xl">
+                                            {srch.map((r,i)=>(
+                                                <div key={i} onClick={()=>selR(r)} className="px-3 py-2.5 hover:bg-slate-700 cursor-pointer border-b border-slate-700/50 last:border-0">
+                                                    <div className="font-semibold text-white text-sm">{r.ticker} <span className="text-xs bg-slate-700 px-1.5 py-0.5 rounded ml-1 text-slate-300">{r.exchange}</span></div>
+                                                    <div className="text-xs text-slate-400 truncate">{r.name}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                {form.tickerDisplay&&<div className="text-xs text-slate-500 mt-1 px-1">{form.tickerDisplay}</div>}
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Exchange</label>
+                                <input type="text" value={form.exchange||''} onChange={e=>{sf('exchange',e.target.value);sf('geographicExposure',defGeo(form.assetType,e.target.value));}} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-sm" placeholder="e.g. Australian, NASDAQ"/>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Type</label>
+                                    <select value={form.assetType} onChange={e=>{sf('assetType',e.target.value);sf('geographicExposure',defGeo(e.target.value,form.exchange));}} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm">
+                                        <option value="STOCK">Stock</option><option value="ETF">ETF</option><option value="CRYPTOCURRENCY">Crypto</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Position</label>
+                                    <select value={form.positionType} onChange={e=>sf('positionType',e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm">
+                                        <option value="long">Long</option><option value="short">Short</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Purchase Date</label>
+                                <input type="date" value={form.purchaseDate} onChange={e=>sf('purchaseDate',e.target.value)} max={new Date().toISOString().split('T')[0]} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm"/>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Quantity</label>
+                                    <input type="number" value={form.quantity} onChange={e=>sf('quantity',parseFloat(e.target.value)||0)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.00000001" min="0"/>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Price per Unit</label>
+                                    <input type="number" value={form.purchasePrice} onChange={e=>sf('purchasePrice',parseFloat(e.target.value)||0)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm" step="0.01" min="0"/>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Currency</label>
+                                <select value={form.purchaseCurrency} onChange={e=>{sf('purchaseCurrency',e.target.value);setFxInput('');}} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm">
+                                    {CURRENCIES.map(c=><option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            {form.purchaseCurrency!=='AUD'&&(
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
+                                        AUD/{form.purchaseCurrency} at Purchase
+                                        <span className="normal-case text-slate-600 ml-1">(e.g. 0.65 means 1 AUD = 0.65 {form.purchaseCurrency})</span>
+                                    </label>
+                                    <input type="number" value={fxInput} onChange={e=>setFxInput(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-sm"
+                                        placeholder={'Current: 1 AUD = '+currentAUDRate+' '+form.purchaseCurrency} step="0.0001" min="0"/>
+                                    <p className="text-xs text-slate-600 mt-1">Find this on your broker confirmation or use xe.com for historical rates. Required for accurate FX tracking.</p>
+                                </div>
+                            )}
+                            {/* Margin */}
+                            <div className="border-t border-slate-800 pt-4">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs text-slate-400 uppercase tracking-wide">Purchased on margin?</label>
+                                    <button type="button" onClick={()=>sf('onMargin',!form.onMargin)}
+                                        style={{width:'40px',height:'22px',borderRadius:'11px',border:'none',cursor:'pointer',transition:'background 0.2s',background:form.onMargin?'#10b981':'#334155',position:'relative'}}>
+                                        <div style={{position:'absolute',top:'3px',left:form.onMargin?'21px':'3px',width:'16px',height:'16px',borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
+                                    </button>
+                                </div>
+                                {form.onMargin&&(()=>{
+                                    const fullVal=(form.quantity||0)*(form.purchasePrice||0);
+                                    const marginPct=parseFloat(form.marginPct)||0;
+                                    const deposit=fullVal*(marginPct/100);
+                                    return(
+                                        <div className="mt-3 space-y-3">
+                                            <div>
+                                                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Margin Rate (%)</label>
+                                                <input type="number" min="1" max="100" value={form.marginPct||''} onChange={e=>sf('marginPct',parseFloat(e.target.value)||0)}
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-sm" placeholder="e.g. 20"/>
+                                            </div>
+                                            {marginPct>0&&fullVal>0&&(
+                                                <div className="bg-slate-800/60 rounded-lg p-3 text-xs space-y-1">
+                                                    <div className="flex justify-between"><span className="text-slate-400">Full contract value:</span><span className="text-white">{symOf(form.purchaseCurrency)}{fullVal.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                                                    <div className="flex justify-between"><span className="text-slate-400">Your margin deposit ({marginPct}%):</span><span className="text-emerald-400 font-semibold">{symOf(form.purchaseCurrency)}{deposit.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                                                    <div className="flex justify-between"><span className="text-slate-400">Broker funds:</span><span className="text-slate-300">{symOf(form.purchaseCurrency)}{(fullVal-deposit).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                            {form.assetType==='ETF'&&(
+                                <div className="border-t border-slate-800 pt-4">
+                                    <div className="flex justify-between mb-3"><label className="text-xs text-slate-400 uppercase tracking-wide">Geographic Exposure</label><span className={`text-xs font-semibold ${Math.abs(gt-100)<0.5?'text-emerald-400':'text-red-400'}`}>{gt.toFixed(0)}%</span></div>
+                                    <div className="grid grid-cols-5 gap-2">
+                                        {['us','aus','eu','asia','other'].map(r=>(
+                                            <div key={r}><label className="block text-xs text-slate-600 mb-1 text-center uppercase">{r}</label>
+                                            <input type="number" min="0" max="100" value={form.geographicExposure?.[r]||0} onChange={e=>sf('geographicExposure',{...form.geographicExposure,[r]:parseFloat(e.target.value)||0})} className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-white text-xs text-center focus:outline-none focus:border-blue-500"/></div>
+                                        ))}
+                                    </div>
+                                    {Math.abs(gt-100)>0.5&&gt>0&&<p className="text-xs text-orange-400 mt-2">⚠️ Exposures total {gt.toFixed(1)}% — leave at 0 if unknown</p>}
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex gap-3 mt-6">
+                            <button onClick={()=>{setModal(false);setSrch([]);}} className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">Cancel</button>
+                            <button onClick={submit} className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-semibold">{editId?'Update':'Add Holding'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Sell Modal */}
+            {sellModal && sellId && <SellModal holding={holdings.find(x=>x.id===sellId)} sellF={sellF} setSellF={setSellF} onClose={()=>setSellModal(false)} onSubmit={sellSub} fmtQ={fmtQ}/>}
+            {editSaleModal && editSaleHoldingId && <SellModal holding={holdings.find(x=>x.id===editSaleHoldingId)} sellF={sellF} setSellF={setSellF} onClose={()=>setEditSaleModal(false)} onSubmit={editSaleSub} fmtQ={fmtQ} title="Edit Sale"/>}
+            {divModal && divHoldingId && <DividendModal holding={holdings.find(x=>x.id===divHoldingId)} divF={divF} setDivF={setDivF} onClose={()=>setDivModal(false)} onSubmit={divSub}/>}
+            {editDivModal && editDivHoldingId && <DividendModal holding={holdings.find(x=>x.id===editDivHoldingId)} divF={divF} setDivF={setDivF} onClose={()=>setEditDivModal(false)} onSubmit={editDivSub} title="Edit Dividend"/>}
+            {importReview && <ImportReviewModal
+                importRows={importReview}
+                setImportRows={setImportReview}
+                existingHoldings={holdings}
+                onClose={()=>setImportReview(null)}
+                onConfirm={async(rows)=>{
+                    const withNewIds=rows.map(h=>{
+                        const {_skip,...rest}=h;
+                        return{...rest,
+                            tickerDisplay:rest.ticker,
+                            id:Date.now().toString(36)+Math.random().toString(36).slice(2)
+                        };
+                    });
+                    // Immediately resolve proper display names from Yahoo Finance search
+                    const named=await Promise.all(withNewIds.map(async h=>{
+                        try{
+                            const results=await searchT(h.ticker);
+                            const match=results.find(r=>r.ticker===h.ticker||r.ticker===yTicker(h.ticker,h.exchange));
+                            if(match&&match.name) return{...h,tickerDisplay:match.name};
+                        }catch(e){}
+                        return h;
+                    }));
+                    setHoldings(cur=>[...cur,...named]);
+                    setImportReview(null);
+                }}
+            />}
+
+            {/* Footer */}
+            <div style={{marginTop:'48px',paddingTop:'16px',borderTop:'1px solid #1e293b',textAlign:'center',fontSize:'11px',color:'#334155'}}>
+                © {new Date().getFullYear()} Portfolio Tracker. Licensed under the GNU GPL v3.0.
+            </div>
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
