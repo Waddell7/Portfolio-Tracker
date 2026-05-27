@@ -1,0 +1,595 @@
+{
+  "holdings": [
+    {
+      "id": "mpmow8gukyl17wdkq",
+      "ticker": "BHP.AX",
+      "tickerDisplay": "BHP Group Limited",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2023-03-15",
+      "quantity": 350,
+      "purchasePrice": 44.5,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 100,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2023-09-20",
+          "amountPerUnit": 0.91,
+          "quantity": 350,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-03-18",
+          "amountPerUnit": 0.72,
+          "quantity": 350,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-09-19",
+          "amountPerUnit": 0.86,
+          "quantity": 350,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        }
+      ]
+    },
+    {
+      "id": "mpmow8gueryh5nqhf8m",
+      "ticker": "CBA.AX",
+      "tickerDisplay": "Commonwealth Bank of Australia",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2022-08-10",
+      "quantity": 120,
+      "purchasePrice": 98,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 100,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [
+        {
+          "quantity": 30,
+          "salePrice": 145,
+          "saleDate": "2024-06-20",
+          "saleExchangeRate": 1
+        }
+      ],
+      "dividends": [
+        {
+          "date": "2023-03-29",
+          "amountPerUnit": 2.1,
+          "quantity": 120,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2023-09-27",
+          "amountPerUnit": 2.4,
+          "quantity": 120,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-03-27",
+          "amountPerUnit": 2.25,
+          "quantity": 120,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-09-25",
+          "amountPerUnit": 2.5,
+          "quantity": 90,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        }
+      ]
+    },
+    {
+      "id": "mpmow8gu7wtf1pfazum",
+      "ticker": "WES.AX",
+      "tickerDisplay": "Wesfarmers Limited",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2023-11-20",
+      "quantity": 100,
+      "purchasePrice": 52.3,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 100,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2024-03-25",
+          "amountPerUnit": 0.95,
+          "quantity": 100,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-09-23",
+          "amountPerUnit": 1.02,
+          "quantity": 100,
+          "frankedPct": 100,
+          "currency": "AUD",
+          "exchangeRate": 0
+        }
+      ]
+    },
+    {
+      "id": "mpmow8gu4ccww45i41e",
+      "ticker": "RIO.AX",
+      "tickerDisplay": "Rio Tinto Group",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2024-04-15",
+      "quantity": 80,
+      "purchasePrice": 118.5,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 100,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": []
+    },
+    {
+      "id": "mpmow8guz0kd8qdpu1i",
+      "ticker": "AAPL",
+      "tickerDisplay": "Apple Inc.",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2022-06-15",
+      "quantity": 55,
+      "purchasePrice": 148,
+      "purchaseCurrency": "USD",
+      "exchange": "NASDAQ",
+      "purchaseExchangeRate": 1.3889,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [
+        {
+          "quantity": 15,
+          "salePrice": 195,
+          "saleDate": "2024-03-10",
+          "saleExchangeRate": 1.5385
+        }
+      ],
+      "dividends": [
+        {
+          "date": "2023-08-17",
+          "amountPerUnit": 0.0024,
+          "quantity": 55,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.65
+        },
+        {
+          "date": "2024-02-15",
+          "amountPerUnit": 0.0024,
+          "quantity": 40,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.66
+        }
+      ]
+    },
+    {
+      "id": "mpmow8guif17gecsmz",
+      "ticker": "NVDA",
+      "tickerDisplay": "NVIDIA Corporation",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2023-01-20",
+      "quantity": 30,
+      "purchasePrice": 165,
+      "purchaseCurrency": "USD",
+      "exchange": "NASDAQ",
+      "purchaseExchangeRate": 1.4286,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": []
+    },
+    {
+      "id": "mpmow8gu2eirypfi7t",
+      "ticker": "MSFT",
+      "tickerDisplay": "Microsoft Corporation",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2023-07-10",
+      "quantity": 20,
+      "purchasePrice": 340,
+      "purchaseCurrency": "USD",
+      "exchange": "NASDAQ",
+      "purchaseExchangeRate": 1.4925,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2023-09-14",
+          "amountPerUnit": 0.0068,
+          "quantity": 20,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.64
+        },
+        {
+          "date": "2024-03-14",
+          "amountPerUnit": 0.0075,
+          "quantity": 20,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.66
+        },
+        {
+          "date": "2024-09-12",
+          "amountPerUnit": 0.0075,
+          "quantity": 20,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.65
+        }
+      ]
+    },
+    {
+      "id": "mpmow8gu8mt3r795vov",
+      "ticker": "TSLA",
+      "tickerDisplay": "Tesla, Inc.",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2024-01-15",
+      "quantity": 50,
+      "purchasePrice": 200,
+      "purchaseCurrency": "USD",
+      "exchange": "NASDAQ",
+      "purchaseExchangeRate": 1.4706,
+      "onMargin": true,
+      "marginPct": 30,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": []
+    },
+    {
+      "id": "mpmow8guro8i7hz1dv",
+      "ticker": "HSBA.L",
+      "tickerDisplay": "HSBC Holdings plc",
+      "assetType": "STOCK",
+      "positionType": "long",
+      "purchaseDate": "2023-05-10",
+      "quantity": 150,
+      "purchasePrice": 600,
+      "purchaseCurrency": "GBP",
+      "exchange": "London",
+      "purchaseExchangeRate": 1.8867924528301885,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 0,
+        "eu": 40,
+        "asia": 45,
+        "other": 15
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2023-10-12",
+          "amountPerUnit": 0.1,
+          "quantity": 150,
+          "frankedPct": 0,
+          "currency": "GBP",
+          "exchangeRate": 0.52
+        },
+        {
+          "date": "2024-04-25",
+          "amountPerUnit": 0.1,
+          "quantity": 150,
+          "frankedPct": 0,
+          "currency": "GBP",
+          "exchangeRate": 0.51
+        },
+        {
+          "date": "2024-10-10",
+          "amountPerUnit": 0.105,
+          "quantity": 150,
+          "frankedPct": 0,
+          "currency": "GBP",
+          "exchangeRate": 0.5
+        }
+      ]
+    },
+    {
+      "id": "mpmow8gum5z1mzofqxp",
+      "ticker": "VAS.AX",
+      "tickerDisplay": "Vanguard Australian Shares Index ETF",
+      "assetType": "ETF",
+      "positionType": "long",
+      "purchaseDate": "2022-04-01",
+      "quantity": 450,
+      "purchasePrice": 85,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 100,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2022-10-04",
+          "amountPerUnit": 1.52,
+          "quantity": 450,
+          "frankedPct": 65,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2023-04-04",
+          "amountPerUnit": 1.68,
+          "quantity": 450,
+          "frankedPct": 65,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2023-10-03",
+          "amountPerUnit": 1.74,
+          "quantity": 450,
+          "frankedPct": 65,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-04-02",
+          "amountPerUnit": 1.8,
+          "quantity": 450,
+          "frankedPct": 65,
+          "currency": "AUD",
+          "exchangeRate": 0
+        }
+      ]
+    },
+    {
+      "id": "mpmow8guvpi87nhxb4",
+      "ticker": "IVV.AX",
+      "tickerDisplay": "iShares S&P 500 ETF",
+      "assetType": "ETF",
+      "positionType": "long",
+      "purchaseDate": "2022-09-15",
+      "quantity": 250,
+      "purchasePrice": 56,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2023-01-10",
+          "amountPerUnit": 0.14,
+          "quantity": 250,
+          "frankedPct": 0,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2023-07-11",
+          "amountPerUnit": 0.16,
+          "quantity": 250,
+          "frankedPct": 0,
+          "currency": "AUD",
+          "exchangeRate": 0
+        },
+        {
+          "date": "2024-01-09",
+          "amountPerUnit": 0.17,
+          "quantity": 250,
+          "frankedPct": 0,
+          "currency": "AUD",
+          "exchangeRate": 0
+        }
+      ]
+    },
+    {
+      "id": "mpmow8guwzgreqp4i9t",
+      "ticker": "NDQ.AX",
+      "tickerDisplay": "BetaShares NASDAQ 100 ETF",
+      "assetType": "ETF",
+      "positionType": "long",
+      "purchaseDate": "2023-02-10",
+      "quantity": 300,
+      "purchasePrice": 38,
+      "purchaseCurrency": "AUD",
+      "exchange": "Australian",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": []
+    },
+    {
+      "id": "mpmow8guxfy2243bxye",
+      "ticker": "QQQ",
+      "tickerDisplay": "Invesco QQQ Trust",
+      "assetType": "ETF",
+      "positionType": "long",
+      "purchaseDate": "2023-03-01",
+      "quantity": 35,
+      "purchasePrice": 310,
+      "purchaseCurrency": "USD",
+      "exchange": "NASDAQ",
+      "purchaseExchangeRate": 1.4925,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 100,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 0
+      },
+      "sales": [],
+      "dividends": [
+        {
+          "date": "2023-12-29",
+          "amountPerUnit": 0.0052,
+          "quantity": 35,
+          "frankedPct": 0,
+          "currency": "USD",
+          "exchangeRate": 0.68
+        }
+      ]
+    },
+    {
+      "id": "mpmow8guz4510b97rbj",
+      "ticker": "BTC-AUD",
+      "tickerDisplay": "Bitcoin AUD",
+      "assetType": "CRYPTOCURRENCY",
+      "positionType": "long",
+      "purchaseDate": "2023-10-01",
+      "quantity": 0.45,
+      "purchasePrice": 42000,
+      "purchaseCurrency": "AUD",
+      "exchange": "",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 100
+      },
+      "sales": [
+        {
+          "quantity": 0.05,
+          "salePrice": 95000,
+          "saleDate": "2024-03-12",
+          "saleExchangeRate": 1
+        }
+      ],
+      "dividends": []
+    },
+    {
+      "id": "mpmow8guidlyscq4zig",
+      "ticker": "ETH-AUD",
+      "tickerDisplay": "Ethereum AUD",
+      "assetType": "CRYPTOCURRENCY",
+      "positionType": "long",
+      "purchaseDate": "2023-06-15",
+      "quantity": 5.5,
+      "purchasePrice": 2800,
+      "purchaseCurrency": "AUD",
+      "exchange": "",
+      "purchaseExchangeRate": 1,
+      "onMargin": false,
+      "marginPct": 0,
+      "geographicExposure": {
+        "us": 0,
+        "aus": 0,
+        "eu": 0,
+        "asia": 0,
+        "other": 100
+      },
+      "sales": [],
+      "dividends": []
+    }
+  ],
+  "date": "2026-05-26T13:50:26.039Z"
+}
