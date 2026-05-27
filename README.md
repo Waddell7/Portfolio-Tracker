@@ -21,6 +21,14 @@ Want to try it first? Download the dummy portfolio and import it using the 📤 
 - **Portfolio breakdown** — doughnut charts by asset type and geographic exposure
 - **Import / Export** — save your portfolio as a JSON file and reload it any time
 - **100% private** — all data is stored in your own browser's local storage. Nothing is sent to any server.
+  
+<img width="1724" height="1100" alt="image" src="https://github.com/user-attachments/assets/57ef6eef-d30d-4034-8b0a-96195ceebbc5" />
+
+<img width="1774" height="619" alt="image" src="https://github.com/user-attachments/assets/351d4829-775a-452d-8d17-1d4be7335602" />
+
+<img width="1741" height="847" alt="image" src="https://github.com/user-attachments/assets/d247f843-adb8-4343-82fd-f898a9c7df34" />
+
+<img width="1722" height="495" alt="image" src="https://github.com/user-attachments/assets/f7918cb4-e468-44d3-bc09-16ea4dcfe33d" />
 
 ---
 
