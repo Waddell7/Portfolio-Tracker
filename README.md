@@ -1,7 +1,6 @@
 Portfolio Tracker
 
-A self-contained, browser-based investment portfolio tracker. No sign-up, no server, no subscriptions — just open the file and start tracking.
-
+A self-contained, browser-based investment portfolio tracker. No sign-up, no server, no subscriptions
 Built for Australian investors but works for any portfolio with support for multiple currencies, asset types, and exchanges.
 
 ---
@@ -28,7 +27,7 @@ Built for Australian investors but works for any portfolio with support for mult
 ### Use it directly in your browser (recommended)
 Visit the live GitHub Pages link:
 
-> **[https://yourusername.github.io/portfolio-tracker/PortfolioTracker.html](https://yourusername.github.io/portfolio-tracker/PortfolioTracker.html)**
+> **https://waddell7.github.io/Portfolio-Tracker/**
 
 No installation required. Just open the link and start adding holdings.
 
