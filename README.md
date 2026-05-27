@@ -3,6 +3,8 @@ Portfolio Tracker
 A self-contained, browser-based investment portfolio tracker. No sign-up, no server, no subscriptions
 Built for Australian investors but works for any portfolio with support for multiple currencies, asset types, and exchanges.
 
+Want to try it first? Download the dummy portfolio and import it using the 📤 Import button to see what a populated portfolio looks like.
+
 ---
 
 ## Features
