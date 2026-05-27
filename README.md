@@ -30,7 +30,7 @@ Visit the live GitHub Pages link:
 > **https://waddell7.github.io/Portfolio-Tracker/PortfolioTrack.html**
 
 No installation required. Just open the link and start adding holdings.
-### Best experience on 75% zoom
+Best experience on 75% zoom
 
 ---
 
