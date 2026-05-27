@@ -1,4 +1,4 @@
-# 📊 Portfolio Tracker
+Portfolio Tracker
 
 A self-contained, browser-based investment portfolio tracker. No sign-up, no server, no subscriptions — just open the file and start tracking.
 
@@ -103,7 +103,7 @@ Price data is sourced from third-party APIs and may be delayed, inaccurate, or u
 
 ## Contributing
 
-Found a bug or have a feature suggestion? Open an issue or submit a pull request — contributions are most welcome.
+Found a bug or have a feature suggestion? Open an issue or submit a pull request, contributions are most welcome.
 
 ---
 
