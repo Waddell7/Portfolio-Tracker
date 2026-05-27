@@ -29,7 +29,7 @@ Want to try it first? Download the dummy portfolio and import it using the 📤 
 ### Use it directly in your browser (recommended)
 Visit the live GitHub Pages link:
 
-> **https://waddell7.github.io/Portfolio-Tracker/PortfolioTrack.html**
+> **https://waddell7.github.io/Portfolio-Tracker/PortfolioTracker.html**
 
 No installation required. Just open the link and start adding holdings.
 Best experience on 75% zoom
