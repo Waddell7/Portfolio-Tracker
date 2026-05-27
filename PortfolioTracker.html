@@ -1955,9 +1955,9 @@ const App=()=>{
                                         <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('lastDate')}>Last Paid {divSortIcon('lastDate')}</th>
                                         <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('paymentCount')}># Payments {divSortIcon('paymentCount')}</th>
                                         <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('paymentCount')}>Units Held {divSortIcon('paymentCount')}</th>
-                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalGross')}>Gross Total {divSortIcon('totalGross')}</th>
-                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalFc')}>Franking Credits {divSortIcon('totalFc')}</th>
                                         <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalNet')}>Net Total {divSortIcon('totalNet')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalFc')}>Franking Credits {divSortIcon('totalFc')}</th>
+                                        <th className="px-4 py-3 text-right cursor-pointer hover:text-slate-400 select-none whitespace-nowrap" onClick={()=>onDivSort('totalGross')}>Gross Total {divSortIcon('totalGross')}</th>
                                         <th className="px-4 py-3 text-center whitespace-nowrap">Actions</th>
                                         <th className="px-2"></th>
                                     </tr>
@@ -1976,9 +1976,9 @@ const App=()=>{
                                                     <td className="px-4 py-3 text-right text-white text-sm">{(()=>{const sd=new Date(dg.lastDate+'T00:00:00');return sd.getDate()+' '+MONTHS[sd.getMonth()]+' '+sd.getFullYear();})()}</td>
                                                     <td className="px-4 py-3 text-right text-white">{dg.paymentCount}</td>
                                                     <td className="px-4 py-3 text-right text-white">{dg.payments[0]?.quantity||'—'}</td>
-                                                    <td className="px-4 py-3 text-right font-medium text-white">AU${dg.totalGross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-                                                    <td className={`px-4 py-3 text-right font-medium ${dg.totalFc>0?'text-emerald-400':'text-slate-500'}`}>{dg.totalFc>0?'AU$'+dg.totalFc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
                                                     <td className="px-4 py-3 text-right font-bold text-emerald-400">AU${dg.totalNet.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${dg.totalFc>0?'text-emerald-400':'text-slate-500'}`}>{dg.totalFc>0?'AU$'+dg.totalFc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
+                                                    <td className="px-4 py-3 text-right font-medium text-emerald-400">AU${dg.totalGross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
                                                     <td className="px-4 py-3 text-center">
                                                         <div className="flex gap-1 justify-center">
                                                             <button onClick={()=>openEditDiv(dg.payments[0].holdingId,dg.payments[0].divIndex,dg.payments[0])} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit">✏️</button>
@@ -1997,9 +1997,9 @@ const App=()=>{
                                                             <td className="px-4 py-2 text-right text-xs text-slate-400">{dateLabel}</td>
                                                             <td className="px-4 py-2 text-right text-xs text-slate-400">{(()=>{const c=p.amountPerUnit*100;const cur=p.currency||dg.purchaseCurrency||'AUD';const sym=({AUD:'AU¢',USD:'US¢',GBP:'p',EUR:'c',CAD:'CA¢',SGD:'SG¢',CHF:'Rp',JPY:'sen',CNY:'fen',INR:'p'}[cur])||(cur+'¢');return (Number.isInteger(c)?c.toFixed(0):c.toLocaleString('en-AU',{maximumFractionDigits:4}))+' '+sym+'/unit';})()}</td>
                                                             <td className="px-4 py-2 text-right text-xs text-slate-400">{fmtQ(p.quantity,null)}</td>
-                                                            <td className="px-4 py-2 text-right text-xs text-slate-400">AU${p.gross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-                                                            <td className={`px-4 py-2 text-right text-xs ${p.fc>0?'text-emerald-400':'text-slate-600'}`}>{p.fc>0?'AU$'+p.fc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
                                                             <td className="px-4 py-2 text-right text-xs text-emerald-400">AU${p.net.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                                                            <td className={`px-4 py-2 text-right text-xs ${p.fc>0?'text-emerald-400':'text-slate-600'}`}>{p.fc>0?'AU$'+p.fc.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</td>
+                                                            <td className="px-4 py-2 text-right text-xs text-emerald-400">AU${p.gross.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
                                                             <td className="px-4 py-2 text-center"><div className="flex gap-1 justify-center"><button onClick={()=>openEditDiv(p.holdingId,p.divIndex,p)} className="p-1 hover:bg-blue-900/25 rounded text-xs" title="Edit">✏️</button><button onClick={()=>delDiv(p.holdingId,p.divIndex)} className="p-1 hover:bg-red-900/25 rounded text-xs" title="Delete">🗑️</button></div></td>
                                                             <td className="px-2"></td>
                                                         </tr>
