@@ -1150,7 +1150,7 @@ const StakeChart=({data, totalValue, totalPnl, totalReturnPct, earliestPurchaseD
 };
 
 // ---- Sell Modal Component ----
-const SellModal = ({ holding, sellF, setSellF, onClose, onSubmit, fmtQ, title='Record Sale' }) => {
+const SellModal = ({ holding, sellF, setSellF, onClose, onSubmit, fmtQ, title='Record Sale', maxQty=null }) => {
     if (!holding) return null;
     const isNonAUD = holding.purchaseCurrency && holding.purchaseCurrency !== 'AUD';
     const sym = symOf(holding.purchaseCurrency||'AUD');
@@ -1158,7 +1158,7 @@ const SellModal = ({ holding, sellF, setSellF, onClose, onSubmit, fmtQ, title='R
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 rounded-xl border border-slate-700/80 w-full max-w-sm p-6">
                 <h3 className="text-lg font-bold mb-1">Sell Position</h3>
-                <p className="text-xs text-slate-500 mb-5">{holding.tickerDisplay || holding.ticker} — {fmtQ(effQty(holding), holding.assetType)} available</p>
+                <p className="text-xs text-slate-500 mb-5">{holding.tickerDisplay || holding.ticker} — {fmtQ(maxQty!=null?maxQty:effQty(holding), holding.assetType)} available</p>
                 <div className="space-y-4">
                     <div>
                         <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wide">Quantity</label>
@@ -1520,13 +1520,16 @@ const App=()=>{
         // Remaining = effQty + the original qty of this sale (so we can re-validate)
         const origSaleQty=(h.sales||[])[editSaleIndex]?.quantity||0;
         const remaining=effQty(h)+origSaleQty;
-        if(sellF.quantity>remaining+1e-9){alert(`Cannot sell more than ${fmtQ(remaining,h.assetType)} available`);return;}
+        // Clamp a tiny rounding overage (display rounds to 8dp) so selling the full amount works
+        let editQty=sellF.quantity;
+        if(editQty>remaining && editQty-remaining<1e-6) editQty=remaining;
+        if(editQty>remaining+1e-9){alert(`Cannot sell more than ${fmtQ(remaining,h.assetType)} available`);return;}
         const isNonAUD = h.purchaseCurrency && h.purchaseCurrency !== 'AUD';
         if(isNonAUD && (!sellF.saleExchangeRate || sellF.saleExchangeRate <= 0)){
             alert(`Please enter the AUD/${h.purchaseCurrency} exchange rate at the time of sale`);return;
         }
         const saleExchangeRate = isNonAUD ? (1/sellF.saleExchangeRate) : 1;
-        const updatedSale={quantity:sellF.quantity,salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
+        const updatedSale={quantity:editQty,salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
         setHoldings(hs=>hs.map(x=>{
             if(x.id!==editSaleHoldingId) return x;
             const newSales=[...(x.sales||[])];
@@ -1539,8 +1542,15 @@ const App=()=>{
         if(!sellF.quantity||!sellF.salePrice){alert('Fill in quantity and price');return;}
         const h=holdings.find(x=>x.id===sellId);
         if(!h){setSellModal(false);return;}
-        const remaining=effQty(h);
-        if(sellF.quantity>remaining+1e-9){alert(`Cannot sell more than ${fmtQ(remaining,h.assetType)} remaining`);return;}
+        // Gather all lots of the same ticker/type/position, oldest first (FIFO)
+        const lots=holdings
+            .filter(x=>x.ticker===h.ticker && x.assetType===h.assetType && (x.positionType||'long')===(h.positionType||'long'))
+            .sort((a,b)=>(a.purchaseDate||'').localeCompare(b.purchaseDate||''));
+        const totalRemaining=lots.reduce((s,l)=>s+effQty(l),0);
+        // Clamp a tiny rounding overage (display rounds to 8dp) so selling the full amount works
+        let sellQty=sellF.quantity;
+        if(sellQty>totalRemaining && sellQty-totalRemaining<1e-6) sellQty=totalRemaining;
+        if(sellQty>totalRemaining+1e-9){alert(`Cannot sell more than ${fmtQ(totalRemaining,h.assetType)} remaining`);return;}
         const isNonAUD = h.purchaseCurrency && h.purchaseCurrency !== 'AUD';
         if(isNonAUD && (!sellF.saleExchangeRate || sellF.saleExchangeRate <= 0)){
             alert(`Please enter the AUD/${h.purchaseCurrency} exchange rate at the time of sale`);return;
@@ -1548,8 +1558,22 @@ const App=()=>{
         // Use user-entered rate for non-AUD. For AUD holdings, rate is 1.
         // Store as AUD per 1 foreign unit (inverted from the AUD/currency form input).
         const saleExchangeRate = isNonAUD ? (1/sellF.saleExchangeRate) : 1;
-        const newSale={quantity:sellF.quantity,salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
-        setHoldings(hs=>hs.map(x=>x.id===sellId?{...x,sales:[...(x.sales||[]),newSale]}:x));
+        // Allocate the sale across lots FIFO so each portion keeps its correct cost basis
+        let toSell=sellQty;
+        const alloc={};
+        for(const lot of lots){
+            if(toSell<=1e-9) break;
+            const avail=effQty(lot);
+            if(avail<=0) continue;
+            const take=Math.min(avail,toSell);
+            alloc[lot.id]=take;
+            toSell-=take;
+        }
+        setHoldings(hs=>hs.map(x=>{
+            if(alloc[x.id]==null) return x;
+            const newSale={quantity:alloc[x.id],salePrice:sellF.salePrice,saleDate:sellF.saleDate,saleExchangeRate};
+            return{...x,sales:[...(x.sales||[]),newSale]};
+        }));
         setSellModal(false);setSellId(null);
     };
     const delSale=(holdingId,saleIndex)=>{
@@ -2149,8 +2173,8 @@ const App=()=>{
             )}
 
             {/* Sell Modal */}
-            {sellModal && sellId && <SellModal holding={holdings.find(x=>x.id===sellId)} sellF={sellF} setSellF={setSellF} onClose={()=>setSellModal(false)} onSubmit={sellSub} fmtQ={fmtQ}/>}
-            {editSaleModal && editSaleHoldingId && <SellModal holding={holdings.find(x=>x.id===editSaleHoldingId)} sellF={sellF} setSellF={setSellF} onClose={()=>setEditSaleModal(false)} onSubmit={editSaleSub} fmtQ={fmtQ} title="Edit Sale"/>}
+            {sellModal && sellId && (()=>{const h=holdings.find(x=>x.id===sellId);const maxQty=h?holdings.filter(x=>x.ticker===h.ticker&&x.assetType===h.assetType&&(x.positionType||'long')===(h.positionType||'long')).reduce((s,l)=>s+effQty(l),0):0;return <SellModal holding={h} maxQty={maxQty} sellF={sellF} setSellF={setSellF} onClose={()=>setSellModal(false)} onSubmit={sellSub} fmtQ={fmtQ}/>;})()}
+            {editSaleModal && editSaleHoldingId && (()=>{const h=holdings.find(x=>x.id===editSaleHoldingId);const origSaleQty=(h?.sales||[])[editSaleIndex]?.quantity||0;const maxQty=h?effQty(h)+origSaleQty:0;return <SellModal holding={h} maxQty={maxQty} sellF={sellF} setSellF={setSellF} onClose={()=>setEditSaleModal(false)} onSubmit={editSaleSub} fmtQ={fmtQ} title="Edit Sale"/>;})()}
             {divModal && divHoldingId && <DividendModal holding={holdings.find(x=>x.id===divHoldingId)} divF={divF} setDivF={setDivF} onClose={()=>setDivModal(false)} onSubmit={divSub}/>}
             {editDivModal && editDivHoldingId && <DividendModal holding={holdings.find(x=>x.id===editDivHoldingId)} divF={divF} setDivF={setDivF} onClose={()=>setEditDivModal(false)} onSubmit={editDivSub} title="Edit Dividend"/>}
             {importReview && <ImportReviewModal
